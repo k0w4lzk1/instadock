@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Log in to GitHub Container Registry
@@ -24,10 +24,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Sanitize branch name
+      - name: Sanitize repo and branch names
         id: sanitize
         run: |
-          BRANCH_NAME=${GITHUB_REF_NAME//\//-}
+          BRANCH_NAME=$(echo "${GITHUB_REF_NAME}" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
           REPO_NAME=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
           echo "safe_tag=${BRANCH_NAME}" >> "$GITHUB_OUTPUT"
           echo "repo_name=${REPO_NAME}" >> "$GITHUB_OUTPUT"
@@ -36,7 +36,11 @@ jobs:
         run: |
           IMAGE_NAME="ghcr.io/${{ steps.sanitize.outputs.repo_name }}:${{ steps.sanitize.outputs.safe_tag }}"
           echo "🏗️ Building image: ${IMAGE_NAME}"
-          docker build -t "${IMAGE_NAME}" -f docker/sandbox.Dockerfile docker/
+          docker build \
+            -t "${IMAGE_NAME}" \
+            -f docker/sandbox.Dockerfile \
+            --build-arg SUBMISSION_TAG="${{ steps.sanitize.outputs.safe_tag }}" \
+            .
 
       - name: Push Docker image
         run: |
