@@ -3,8 +3,8 @@ name: Build and Push Submission Image
 on:
   push:
     branches:
-      - "submission/**"   # Only build approved submission branches
-  workflow_dispatch:      # Allow manual trigger too
+      - "submission/**"   # Build only submission branches
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -29,21 +29,23 @@ jobs:
         id: sanitize
         run: |
           SAFE_TAG=$(echo "${GITHUB_REF_NAME}" | tr '/A-Z' '-a-z')
+          REPO_NAME=$(echo "${{ github.repository }}" | tr 'A-Z' 'a-z')
           echo "safe_tag=${SAFE_TAG}" >> $GITHUB_OUTPUT
+          echo "repo_name=${REPO_NAME}" >> $GITHUB_OUTPUT
 
       - name: Build Docker image
         run: |
-          IMAGE_NAME="ghcr.io/${{ github.repository }}:${{ steps.sanitize.outputs.safe_tag }}"
+          IMAGE_NAME="ghcr.io/${{ steps.sanitize.outputs.repo_name }}:${{ steps.sanitize.outputs.safe_tag }}"
           echo "🏗️ Building image: ${IMAGE_NAME}"
           docker build -t "${IMAGE_NAME}" -f docker/sandbox.Dockerfile .
-      
+
       - name: Push Docker image
         run: |
-          IMAGE_NAME="ghcr.io/${{ github.repository }}:${{ steps.sanitize.outputs.safe_tag }}"
+          IMAGE_NAME="ghcr.io/${{ steps.sanitize.outputs.repo_name }}:${{ steps.sanitize.outputs.safe_tag }}"
           echo "🚀 Pushing image: ${IMAGE_NAME}"
           docker push "${IMAGE_NAME}"
 
       - name: Output result
         run: |
           echo "✅ Image pushed successfully!"
-          echo "🔗 ghcr.io/${{ github.repository }}:${{ steps.sanitize.outputs.safe_tag }}"
+          echo "🔗 ghcr.io/${{ steps.sanitize.outputs.repo_name }}:${{ steps.sanitize.outputs.safe_tag }}"
