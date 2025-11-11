@@ -1,0 +1,15 @@
+version: "3.8"
+services:
+  backend:
+    build:
+      context: ./backend
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    volumes:
+      - ./backend:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - JWT_SECRET=super-secret-key
+      - ACTUAL_REPO=https://github.com/k0w4lzk1/InstaDock
+      - PROXY_HOST=localhost
+    ports:
+      - "8000:8000"
