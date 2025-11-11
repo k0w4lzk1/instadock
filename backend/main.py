@@ -6,6 +6,7 @@ from backend.docker_manager import spawn, stop, list_containers, system_stats
 from backend.auth import require_user, require_admin
 from backend.users import router as user_router
 from backend.users import ensure_default_admin
+from backend.db import list_pending_submissions
 
 app = FastAPI(title="InstaDock API")
 
@@ -75,9 +76,10 @@ def list_all_containers():
 def get_stats():
     return system_stats()
 
-@app.get("/admin/submissions")
-def list_submissions(user=Depends(require_admin)):
-    return get_all_submissions()
+@app.get("/admin/submissions", dependencies=[Depends(require_admin)])
+def get_pending_submissions():
+    """List all pending submissions for the admin panel."""
+    return list_pending_submissions()
 
 @app.get("/")
 def root():

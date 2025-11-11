@@ -61,6 +61,21 @@ def update_submission_status(sub_id: str, new_status: str):
         c.execute("UPDATE submissions SET status=? WHERE id=?", (new_status, sub_id))
         conn.commit()
 
+def set_image_for_submission(sub_id: str, image_tag: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("UPDATE submissions SET image_tag=? WHERE id=?", (image_tag, sub_id))
+        conn.commit()
+
+def list_pending_submissions():
+    """Return all submissions with status 'pending'."""
+    
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        c.execute("SELECT * FROM submissions WHERE status='pending'")
+        rows = [dict(row) for row in c.fetchall()]
+    return rows
 
 # Initialize DB at import
 init_db()

@@ -12,7 +12,8 @@ class SubmitZipResp(BaseModel):
     status: str = "pending"
 
 class SpawnReq(BaseModel):
-    image: str
+    image: Optional[str] = None
+    submission_id: Optional[str] = None
     ttl_seconds: int = 600
 
 class SpawnResp(BaseModel):

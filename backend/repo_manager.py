@@ -11,7 +11,7 @@ from datetime import datetime
 
 # --- CONFIG ---
 WORKDIR = Path("/tmp/instadock_submissions")
-REPO_URL = os.getenv("MAIN_REPO_URL", "https://github.com/k0w4lzk1/InstaDock.git")
+REPO_URL = os.getenv("MAIN_REPO_URL", "https://github.com/k0w4lzk1/instaDock.git")
 WORKDIR.mkdir(parents=True, exist_ok=True)
 
 # --- HELPERS ---
@@ -190,34 +190,82 @@ def create_branch_from_zip(user_id: str, file):
 
 
 # --- ADMIN ACTIONS ---
+from .docker_manager import build_image
+
 def approve_submission(sub_id: str):
+    """Mark submission as approved and trigger build via GitHub."""
     from .db import get_submission, update_submission_status
+
     sub = get_submission(sub_id)
     if not sub:
         raise RuntimeError("Submission not found")
 
     branch = sub["branch"]
-    user_id = sub["user_id"]
+    tmp_repo = WORKDIR / f"approve_{sub_id}"
 
     try:
-        tmp_repo = WORKDIR / f"merge_{sub_id}"
         _git("clone", REPO_URL, str(tmp_repo))
-        _git("checkout", "main", cwd=tmp_repo)
+        _git("fetch", "origin", branch, cwd=tmp_repo)
 
-        # Merge submission safely
-        _git("merge", "--no-ff", branch, "--no-commit", cwd=tmp_repo)
+        # Checkout the branch safely
+        result = subprocess.run(
+            ["git", "checkout", branch],
+            cwd=tmp_repo,
+            capture_output=True,
+            text=True
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Branch {branch} not found: {result.stderr}")
+
+        # Add approval marker
+        marker_file = tmp_repo / "APPROVED"
+        marker_file.write_text("approved=true\n")
+
+        _git("add", "APPROVED", cwd=tmp_repo)
         _git("commit", "-m", f"Approve submission {sub_id}", cwd=tmp_repo)
-        _git("push", "origin", "main", cwd=tmp_repo)
+        _git("push", "origin", branch, cwd=tmp_repo)
 
         update_submission_status(sub_id, "approved")
+        print(f"[✅] Submission {sub_id} approved and branch {branch} updated")
 
-        # 🧩 Automatically build the Docker image
-        build_submission_image(sub_id, user_id, branch)
-
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Git operation failed: {e.stderr or e}")
     finally:
         shutil.rmtree(tmp_repo, ignore_errors=True)
+        
 
 def reject_submission(sub_id: str):
-    """Reject and clean submission."""
-    from .db import update_submission_status
-    update_submission_status(sub_id, "rejected")
+    """Reject submission and remove its branch from remote if it exists."""
+    from .db import get_submission, update_submission_status
+
+    sub = get_submission(sub_id)
+    if not sub:
+        raise RuntimeError("Submission not found")
+
+    branch = sub["branch"]
+    tmp_repo = WORKDIR / f"reject_{sub_id}"
+
+    try:
+        _git("clone", REPO_URL, str(tmp_repo))
+        _git("fetch", "origin", "--all", cwd=tmp_repo)
+
+        # Check if branch exists on remote before deleting
+        result = subprocess.run(
+            ["git", "ls-remote", "--heads", "origin", branch],
+            cwd=tmp_repo,
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0 or not result.stdout.strip():
+            print(f"[⚠️] Branch {branch} does not exist on remote, skipping deletion.")
+        else:
+            _git("push", "origin", "--delete", branch, cwd=tmp_repo)
+            print(f"[❌] Deleted remote branch {branch}")
+
+        update_submission_status(sub_id, "rejected")
+
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Git operation failed: {e.stderr or e}")
+    finally:
+        shutil.rmtree(tmp_repo, ignore_errors=True)

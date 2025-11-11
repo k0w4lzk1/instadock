@@ -1,5 +1,5 @@
 export function getToken() {
-  if (typeof window === "undefined") return null; // <-- ✅ guard for SSR
+  if (typeof window === "undefined") return null;
   return localStorage.getItem("token");
 }
 

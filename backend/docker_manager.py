@@ -1,6 +1,8 @@
 import docker,random,os,datetime,sqlite3
 from .db import DB_PATH
 import psutil
+import subprocess
+from pathlib import Path
 
 client = docker.from_env()
 PROXY_HOST = os.getenv("PROXY_HOST", "localhost")
@@ -61,3 +63,48 @@ def system_stats():
         "memory": psutil.virtual_memory().percent,
         "total_memory": round(psutil.virtual_memory().total / (1024*1024*1024), 1)
     }
+
+GHCR_USER = os.getenv("GHCR_USERNAME", "k0w4lzk1")  # change to your GH username
+GHCR_REGISTRY = f"ghcr.io/{GHCR_USER}"
+WORKDIR = Path("/tmp/instadock_submissions")
+WORKDIR.mkdir(parents=True, exist_ok=True)
+
+def build_image(sub_id: str):
+    """
+    Build and push Docker image for an approved submission to GHCR.
+    """
+    submissions_root = WORKDIR / "submissions"
+
+    # Find submission folder with Dockerfile
+    submission_path = None
+    for user_dir in submissions_root.rglob(sub_id):
+        dockerfile = user_dir / "Dockerfile"
+        if dockerfile.exists():
+            submission_path = user_dir
+            break
+
+    if not submission_path:
+        print(f"[⚠️ No Dockerfile found for {sub_id}, skipping build]")
+        return None
+
+    local_tag = f"instadock_{sub_id}"
+    remote_tag = f"{GHCR_REGISTRY}/{local_tag}:latest"
+
+    print(f"[🐳 Building Docker image for {sub_id}]")
+    try:
+        subprocess.run(["docker", "build", "-t", local_tag, str(submission_path)], check=True)
+        subprocess.run(["docker", "tag", local_tag, remote_tag], check=True)
+
+        # Push to GHCR
+        print(f"[🚀 Pushing to {remote_tag}]")
+        subprocess.run(["docker", "push", remote_tag], check=True)
+
+        # Optional: remove local image to save space
+        subprocess.run(["docker", "rmi", "-f", local_tag], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        print(f"[✅ Built and pushed: {remote_tag}]")
+        return remote_tag
+
+    except subprocess.CalledProcessError as e:
+        print(f"[❌ Docker build/push failed for {sub_id}]\n{e}")
+        return None
