@@ -5,13 +5,13 @@ echo "🚀 InstaDock Sandbox Starting..."
 cd /app/submission
 
 # --- Detect and install requirements ---
-if [ -f "instadocker.json" ]; then
-    echo "📄 Using instadocker.json configuration..."
-    ENTRYPOINT=$(jq -r '.entrypoint // "src/main.py"' instadocker.json)
-    REQS=$(jq -r '.requirements // "requirements.txt"' instadocker.json)
-    PORT=$(jq -r '.port // 8000' instadocker.json)
+if [ -f "instadock.json" ]; then
+    echo "📄 Using instadock.json configuration..."
+    ENTRYPOINT=$(jq -r '.entrypoint // "src/main.py"' instadock.json)
+    REQS=$(jq -r '.requirements // "requirements.txt"' instadock.json)
+    PORT=$(jq -r '.port // 8000' instadock.json)
 else
-    echo "⚙️ No instadocker.json found, using defaults."
+    echo "⚙️ No instadock.json found, using defaults."
     ENTRYPOINT="src/main.py"
     REQS="requirements.txt"
     PORT=8000

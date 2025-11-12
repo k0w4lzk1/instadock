@@ -28,6 +28,6 @@ WORKDIR /app/submission
 ENV APP_ENV=sandbox \
     PYTHONUNBUFFERED=1
 
-# --- Smart install: if instadocker.json exists, use it; else default ---
+# --- Smart install: if instadock.json exists, use it; else default ---
 # The start.sh script will handle detecting entrypoint, installing deps, etc.
 CMD ["bash", "/home/appuser/start.sh"]
