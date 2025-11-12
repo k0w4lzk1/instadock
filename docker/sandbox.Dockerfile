@@ -1,26 +1,33 @@
-# docker/sandbox.Dockerfile
+# ===============================
+# 🐍 InstaDock Universal Sandbox
+# ===============================
 FROM ubuntu:22.04
 
-# --- System setup ---
+# --- Install base packages ---
 RUN apt-get update && apt-get install -y \
-    python3 python3-pip curl socat netcat git \
+    python3 python3-pip curl socat netcat git jq \
     && useradd -ms /bin/bash appuser \
     && rm -rf /var/lib/apt/lists/*
 
-USER appuser
+# --- Set working directory ---
 WORKDIR /home/appuser
 
-# --- Copy trusted scripts ---
+# --- Copy startup helper script ---
 COPY docker/start.sh .
 RUN chmod +x start.sh
 
-# --- Copy submission code safely ---
-# Backend ensures submissions/<user>/<sub_id> exists before merge
-COPY submission /app/submission
+# --- Copy all submission files into /app/submission ---
+# (Works for both direct repo and nested submission folder layouts)
+COPY . /app/submission
 
-# --- Add environment variables (for identification) ---
-ARG SUBMISSION_TAG
-ENV SUBMISSION_TAG=$SUBMISSION_TAG
+# --- Switch to non-root user ---
+USER appuser
+WORKDIR /app/submission
 
-# --- Launch sandbox ---
-CMD ["./start.sh"]
+# --- Optional environment metadata (for logging / tracking) ---
+ENV APP_ENV=sandbox \
+    PYTHONUNBUFFERED=1
+
+# --- Smart install: if instadocker.json exists, use it; else default ---
+# The start.sh script will handle detecting entrypoint, installing deps, etc.
+CMD ["bash", "/home/appuser/start.sh"]
