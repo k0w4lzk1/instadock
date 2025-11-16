@@ -3,6 +3,7 @@ from pydantic import BaseModel, validator
 from passlib.context import CryptContext
 import sqlite3
 import uuid
+
 from .db import DB_PATH
 from .auth import create_token
 
@@ -11,9 +12,7 @@ router = APIRouter()
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 
-# --------------------------------------------------------------------
-# 🟩 REQUEST MODELS
-# --------------------------------------------------------------------
+# ---------------------- REQUEST MODELS ----------------------
 
 class RegisterReq(BaseModel):
     username: str
@@ -22,15 +21,17 @@ class RegisterReq(BaseModel):
     @validator("username")
     def validate_username(cls, v):
         if len(v) < 3:
-            raise ValueError("Username must be at least 3 characters")
-        if any(ch in v for ch in " /\\'\"#?%{}()@!$^&*"):
-            raise ValueError("Invalid characters in username")
+            raise ValueError("Username must be at least 3 characters long.")
+        # Block characters dangerous in URLs, file paths, routers
+        bad_chars = " /\\'\"#?%{}()@!$^&*`~;<>,|"
+        if any(ch in v for ch in bad_chars):
+            raise ValueError("Username contains invalid characters.")
         return v
 
     @validator("password")
     def validate_password(cls, v):
         if len(v) < 6:
-            raise ValueError("Password must be at least 6 characters")
+            raise ValueError("Password must be at least 6 characters.")
         return v
 
 
@@ -39,100 +40,89 @@ class LoginReq(BaseModel):
     password: str
 
 
-# --------------------------------------------------------------------
-# 🟩 REGISTER
-# --------------------------------------------------------------------
+# ---------------------- REGISTER ----------------------
 
 @router.post("/register")
 def register(req: RegisterReq):
     with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+
+        user_id = str(uuid.uuid4())
+        hashed = pwd_context.hash(req.password)
+
         try:
-            c = conn.cursor()
-
-            user_id = str(uuid.uuid4())
-            password_hash = pwd_context.hash(req.password)
-
-            # Force role=user. Admin cannot be self-created.
-            c.execute("""
+            cur.execute("""
                 INSERT INTO users (id, username, password_hash, role)
                 VALUES (?, ?, ?, 'user')
-            """, (user_id, req.username, password_hash))
-
-            conn.commit()
-
+            """, (user_id, req.username, hashed))
         except sqlite3.IntegrityError:
-            raise HTTPException(status_code=400, detail="Username already exists")
+            raise HTTPException(400, "Username already exists")
 
-    # Create secure token
+        conn.commit()
+
     token = create_token(user_id, "user")
-
     return {
         "msg": "User registered",
         "access_token": token,
-        "token_type": "bearer",
+        "token_type": "bearer"
     }
 
 
-# --------------------------------------------------------------------
-# 🟩 LOGIN
-# --------------------------------------------------------------------
+# ---------------------- LOGIN ----------------------
 
 @router.post("/login")
 def login(req: LoginReq):
     with sqlite3.connect(DB_PATH) as conn:
-        c = conn.cursor()
-        c.execute(
-            "SELECT id, password_hash, role FROM users WHERE username=?",
-            (req.username,)
-        )
-        row = c.fetchone()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, password_hash, role FROM users
+            WHERE username=?
+        """, (req.username,))
+        row = cur.fetchone()
 
-        if not row:
-            raise HTTPException(401, "Invalid username or password")
+    if not row:
+        raise HTTPException(401, "Invalid username or password")
 
-        user_id, password_hash, role = row
+    user_id, password_hash, role = row
 
-        if not pwd_context.verify(req.password, password_hash):
-            raise HTTPException(401, "Invalid username or password")
+    if not pwd_context.verify(req.password, password_hash):
+        raise HTTPException(401, "Invalid username or password")
 
-    # Return signed token
     token = create_token(user_id, role)
-
     return {
         "access_token": token,
         "token_type": "bearer"
     }
 
 
-# --------------------------------------------------------------------
-# 🟩 ENSURE DEFAULT ADMIN (SAFE)
-# --------------------------------------------------------------------
+# ---------------------- DEFAULT ADMIN CREATION ----------------------
 
 def ensure_default_admin():
     """
-    Create a default admin if none exists.
-    ONLY way admin can exist.
+    Creates a default admin if none exists.
+    This is the ONLY path to admin privileges.
     """
     with sqlite3.connect(DB_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT id FROM users WHERE role='admin'")
-        exists = c.fetchone()
+        cur = conn.cursor()
 
-        if exists:
-            print("[⚙️ InstaDock] Admin exists.")
+        cur.execute("SELECT id FROM users WHERE role='admin'")
+        admin = cur.fetchone()
+
+        if admin:
+            print("[InstaDock] Admin already exists.")
             return
 
         user_id = str(uuid.uuid4())
         username = "admin"
-        password = "admin123"
+        password = "admin123"  # User should change this manually after first login
 
         hashed = pwd_context.hash(password)
 
-        c.execute("""
+        cur.execute("""
             INSERT INTO users (id, username, password_hash, role)
             VALUES (?, ?, ?, 'admin')
         """, (user_id, username, hashed))
 
         conn.commit()
 
-        print(f"[⚙️ InstaDock] Default admin created → username='admin' password='admin123' (CHANGE IT!)")
+        print("[InstaDock] Default admin created -> username='admin' password='admin123'")

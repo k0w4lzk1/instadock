@@ -10,7 +10,6 @@ from .db import (
     record_submission,
     update_submission_status,
     get_submission,
-    set_submission_image,
 )
 
 # -------------------------------------------------------------------
@@ -20,65 +19,82 @@ from .db import (
 WORKDIR = Path("/tmp/instadock_submissions")
 WORKDIR.mkdir(parents=True, exist_ok=True)
 
-# Main Git repo containing /submissions folder & workflows
+# Main monorepo where /submissions/ gets updated
 MAIN_REPO_URL = os.getenv("MAIN_REPO_URL", "https://github.com/k0w4lzk1/instaDock.git")
-
-# GitHub username for GHCR images: ghcr.io/USER/
-GHCR_USER = os.getenv("GHCR_USERNAME", "k0w4lzk1")
-GHCR_REGISTRY = f"ghcr.io/{GHCR_USER}"
 
 
 # -------------------------------------------------------------------
-# HELPERS
+# SHELL HELPERS
 # -------------------------------------------------------------------
 
 def _git(*args, cwd=None):
-    """Run git command with clear debugging."""
+    """
+    Run a git command and throw errors cleanly.
+    """
     print(f"[GIT] {' '.join(args)}")
-    result = subprocess.run(["git", *args], cwd=cwd, text=True, capture_output=True)
+    result = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        text=True,
+        capture_output=True
+    )
+
     if result.returncode != 0:
-        raise RuntimeError(f"Git failed: {result.stderr}")
+        raise RuntimeError(f"Git error: {result.stderr}")
+
     return result.stdout.strip()
 
 
-def validate_zip_safe(path: Path):
-    """Basic zip safety: block symlinks, traversals."""
-    for item in path.rglob("*"):
-        if item.is_symlink():
-            raise RuntimeError("ZIP contains unsafe symlink")
+# -------------------------------------------------------------------
+# ZIP SAFETY
+# -------------------------------------------------------------------
 
-        # Prevent ../../ escape attacks
-        if ".." in item.parts:
+def validate_zip_safe(path: Path):
+    """
+    Prevent symlink escapes and unsafe paths.
+    """
+    for p in path.rglob("*"):
+        if p.is_symlink():
+            raise RuntimeError("ZIP contains unsafe symlink")
+        if ".." in p.parts:
             raise RuntimeError("ZIP contains unsafe path traversal")
 
 
-def ensure_manifest(submission_path: Path):
-    """Ensure instadock.json exists."""
-    manifest_path = submission_path / "instadock.json"
+# -------------------------------------------------------------------
+# MANIFEST
+# -------------------------------------------------------------------
+
+def ensure_manifest(path: Path):
+    """
+    Ensure instadock.json exists.
+    """
+    manifest_path = path / "instadock.json"
     if not manifest_path.exists():
-        meta = {
+        data = {
             "dockerfile": "Dockerfile",
             "context": ".",
-            "entrypoint": None,
             "ports": [8080]
         }
         with open(manifest_path, "w") as f:
-            json.dump(meta, f, indent=2)
+            json.dump(data, f, indent=2)
 
 
 # -------------------------------------------------------------------
-# CREATE SUBMISSION FROM REPO
+# CREATE FROM REPO
 # -------------------------------------------------------------------
 
 def create_branch_from_repo(user_id: str, repo_url: str, ref: str = None):
     """
-    Clone user repo → copy into own repo's /submissions/<user>/<sub_id>.
+    Clone user repo, copy its contents into:
+    submissions/<full_user_uuid>/<full_submission_uuid>/
+    inside the main monorepo.
     """
     sub_id = str(uuid.uuid4())
     branch = f"submission/{user_id[:8]}/{sub_id[:8]}"
 
+    # Temp paths
     user_clone = WORKDIR / f"user_{sub_id}"
-    canon_clone = WORKDIR / f"canon_{sub_id}"
+    mono_clone = WORKDIR / f"mono_{sub_id}"
 
     try:
         # Clone user repo
@@ -86,122 +102,131 @@ def create_branch_from_repo(user_id: str, repo_url: str, ref: str = None):
         if ref:
             _git("checkout", ref, cwd=user_clone)
 
-        # Clone main repo
-        _git("clone", "--depth", "1", MAIN_REPO_URL, str(canon_clone))
-        _git("checkout", "-b", branch, cwd=canon_clone)
+        # Clone monorepo
+        _git("clone", "--depth", "1", MAIN_REPO_URL, str(mono_clone))
+        _git("checkout", "-b", branch, cwd=mono_clone)
 
-        # Prepare folder
-        submissions_path = canon_clone / "submissions" / user_id / sub_id
-        submissions_path.mkdir(parents=True, exist_ok=True)
-        ensure_manifest(submissions_path)
+        # Build target path
+        target = mono_clone / "submissions" / user_id / sub_id
+        target.mkdir(parents=True, exist_ok=True)
+
+        ensure_manifest(target)
 
         # Copy user repo contents
         for item in user_clone.iterdir():
             if item.name == ".git":
                 continue
-            target = submissions_path / item.name
+            dest = target / item.name
             if item.is_dir():
-                shutil.copytree(item, target, dirs_exist_ok=True)
+                shutil.copytree(item, dest, dirs_exist_ok=True)
             else:
-                shutil.copy2(item, target)
+                shutil.copy2(item, dest)
 
         # Commit and push
-        _git("add", ".", cwd=canon_clone)
-        _git("commit", "-m", f"Add submission repo → {repo_url}", cwd=canon_clone)
-        _git("push", "origin", branch, cwd=canon_clone)
+        _git("add", ".", cwd=mono_clone)
+        _git("commit", "-m", f"Add submission repo ({repo_url})", cwd=mono_clone)
+        _git("push", "origin", branch, cwd=mono_clone)
 
+        # Record in DB
         record_submission(sub_id, user_id, branch, "pending", repo_url)
+
         return sub_id, branch
 
     finally:
         shutil.rmtree(user_clone, ignore_errors=True)
-        shutil.rmtree(canon_clone, ignore_errors=True)
+        shutil.rmtree(mono_clone, ignore_errors=True)
 
 
 # -------------------------------------------------------------------
-# CREATE SUBMISSION FROM ZIP
+# CREATE FROM ZIP
 # -------------------------------------------------------------------
 
 def create_branch_from_zip(user_id: str, file):
     """
-    Extract uploaded ZIP safely.
-    Copy into our repo under /submissions/<user>/<sub_id>.
+    Extract uploaded ZIP and insert into:
+    submissions/<user_id>/<submission_id>
+    inside monorepo.
     """
     sub_id = str(uuid.uuid4())
     branch = f"submission/{user_id[:8]}/{sub_id[:8]}"
 
-    zip_dir = WORKDIR / f"zip_{sub_id}"
-    canon_clone = WORKDIR / f"canon_{sub_id}"
+    zip_extract_dir = WORKDIR / f"zip_{sub_id}"
+    mono_clone = WORKDIR / f"mono_{sub_id}"
 
     try:
-        zip_dir.mkdir(parents=True, exist_ok=True)
+        zip_extract_dir.mkdir(parents=True, exist_ok=True)
 
         # Extract ZIP
-        with zipfile.ZipFile(file.file, 'r') as z:
-            z.extractall(zip_dir)
+        with zipfile.ZipFile(file.file, "r") as z:
+            z.extractall(zip_extract_dir)
 
-        validate_zip_safe(zip_dir)
+        validate_zip_safe(zip_extract_dir)
 
-        # Clone main repo
-        _git("clone", "--depth", "1", MAIN_REPO_URL, str(canon_clone))
-        _git("checkout", "-b", branch, cwd=canon_clone)
+        # Clone monorepo
+        _git("clone", "--depth", "1", MAIN_REPO_URL, str(mono_clone))
+        _git("checkout", "-b", branch, cwd=mono_clone)
 
-        submissions_path = canon_clone / "submissions" / user_id / sub_id
-        submissions_path.mkdir(parents=True, exist_ok=True)
-        ensure_manifest(submissions_path)
+        target = mono_clone / "submissions" / user_id / sub_id
+        target.mkdir(parents=True, exist_ok=True)
 
-        # Copy files
-        for item in zip_dir.iterdir():
-            target = submissions_path / item.name
+        ensure_manifest(target)
+
+        # Copy zip contents
+        for item in zip_extract_dir.iterdir():
+            dest = target / item.name
             if item.is_dir():
-                shutil.copytree(item, target, dirs_exist_ok=True)
+                shutil.copytree(item, dest, dirs_exist_ok=True)
             else:
-                shutil.copy2(item, target)
+                shutil.copy2(item, dest)
 
-        # Commit & push
-        _git("add", ".", cwd=canon_clone)
-        _git("commit", "-m", f"Add submission ZIP from {user_id}", cwd=canon_clone)
-        _git("push", "origin", branch, cwd=canon_clone)
+        # Commit and push
+        _git("add", ".", cwd=mono_clone)
+        _git("commit", "-m", f"Add ZIP submission ({user_id})", cwd=mono_clone)
+        _git("push", "origin", branch, cwd=mono_clone)
 
-        record_submission(sub_id, user_id, branch, "pending", "uploaded_zip")
+        record_submission(sub_id, user_id, branch, "pending", "zip_upload")
+
         return sub_id, branch
 
     finally:
-        shutil.rmtree(zip_dir, ignore_errors=True)
-        shutil.rmtree(canon_clone, ignore_errors=True)
+        shutil.rmtree(zip_extract_dir, ignore_errors=True)
+        shutil.rmtree(mono_clone, ignore_errors=True)
 
 
 # -------------------------------------------------------------------
-# APPROVE SUBMISSION → BRANCH MARK
+# APPROVE SUBMISSION
 # -------------------------------------------------------------------
 
 def approve_submission(sub_id: str):
     """
-    Mark submission approved by adding APPROVED file to its branch.
-    GitHub Actions will detect this and build to GHCR.
+    Approve submission:
+    - Adds APPROVED file to branch
+    - GitHub Actions workflow does the build
+    - Backend uses deterministic GHCR tag; no callback needed
     """
     sub = get_submission(sub_id)
     if not sub:
         raise RuntimeError("Submission not found")
 
     branch = sub["branch"]
-    clone_path = WORKDIR / f"approve_{sub_id}"
+    approve_clone = WORKDIR / f"approve_{sub_id}"
 
     try:
-        _git("clone", MAIN_REPO_URL, str(clone_path))
-        _git("fetch", "origin", branch, cwd=clone_path)
-        _git("checkout", branch, cwd=clone_path)
+        _git("clone", MAIN_REPO_URL, str(approve_clone))
+        _git("fetch", "origin", branch, cwd=approve_clone)
+        _git("checkout", branch, cwd=approve_clone)
 
-        (clone_path / "APPROVED").write_text("approved=true\n")
+        # Add APPROVED marker
+        (approve_clone / "APPROVED").write_text("approved=true\n")
 
-        _git("add", "APPROVED", cwd=clone_path)
-        _git("commit", "-m", f"Approve submission {sub_id}", cwd=clone_path)
-        _git("push", "origin", branch, cwd=clone_path)
+        _git("add", "APPROVED", cwd=approve_clone)
+        _git("commit", "-m", f"Approve submission {sub_id}", cwd=approve_clone)
+        _git("push", "origin", branch, cwd=approve_clone)
 
         update_submission_status(sub_id, "approved")
 
     finally:
-        shutil.rmtree(clone_path, ignore_errors=True)
+        shutil.rmtree(approve_clone, ignore_errors=True)
 
 
 # -------------------------------------------------------------------
@@ -214,37 +239,24 @@ def reject_submission(sub_id: str):
         raise RuntimeError("Submission not found")
 
     branch = sub["branch"]
-    clone_path = WORKDIR / f"reject_{sub_id}"
+    reject_clone = WORKDIR / f"reject_{sub_id}"
 
     try:
-        _git("clone", MAIN_REPO_URL, str(clone_path))
-        _git("fetch", "origin", "--all", cwd=clone_path)
+        _git("clone", MAIN_REPO_URL, str(reject_clone))
+        _git("fetch", "origin", "--all", cwd=reject_clone)
 
-        # Check if branch exists
+        # Delete branch if it exists
         exists = subprocess.run(
             ["git", "ls-remote", "--heads", "origin", branch],
-            cwd=clone_path,
+            cwd=reject_clone,
             capture_output=True,
             text=True
         )
+
         if exists.stdout.strip():
-            _git("push", "origin", "--delete", branch, cwd=clone_path)
+            _git("push", "origin", "--delete", branch, cwd=reject_clone)
 
         update_submission_status(sub_id, "rejected")
 
     finally:
-        shutil.rmtree(clone_path, ignore_errors=True)
-
-
-# -------------------------------------------------------------------
-# RECEIVE FINAL IMAGE FROM GITHUB ACTIONS
-# -------------------------------------------------------------------
-
-def set_built_image(sub_id: str, image_tag: str):
-    """
-    Called by webhook: store GHCR image like:
-    ghcr.io/user/instadock_<sub_id>:latest
-    """
-    full_tag = f"{GHCR_REGISTRY}/{image_tag}:latest"
-    set_submission_image(sub_id, full_tag)
-    update_submission_status(sub_id, "built")
+        shutil.rmtree(reject_clone, ignore_errors=True)

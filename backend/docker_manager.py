@@ -2,83 +2,63 @@ import docker
 import random
 import os
 import datetime
-import sqlite3
 import subprocess
 import psutil
-from pathlib import Path
 
-from .db import (
-    DB_PATH,
-    save_instance,
-    delete_instance,
-    get_submission,
-    set_submission_image,
-)
+from .db import save_instance, delete_instance
+
+# ---------------------- CONFIG ----------------------
+
+BASE_DOMAIN = os.getenv("BASE_DOMAIN", "localhost")
+GHCR_USER = os.getenv("GHCR_USERNAME", "k0w4lzk1")  # your GitHub username
+GHCR_REGISTRY = f"ghcr.io/{GHCR_USER}"
 
 client = docker.from_env()
 
-# Localhost routing for now — later becomes *.instadock.app
-BASE_DOMAIN = os.getenv("BASE_DOMAIN", "localhost")
 
-# For GitHub registry pulling
-GHCR_USER = os.getenv("GHCR_USERNAME", "k0w4lzk1")
-GHCR_PAT = os.getenv("GHCR_TOKEN", None)  # optional - if pulling private images
-GHCR_REGISTRY = f"ghcr.io/{GHCR_USER}"
-
-
-# ---------------------------------------------------------------------------------------
-# 🔹 HELPERS
-# ---------------------------------------------------------------------------------------
+# ---------------------- HELPERS ----------------------
 
 def docker_pull(image: str):
-    """Pull image from GHCR (or any registry)."""
+    """
+    Pull an image from GHCR.
+    """
     try:
-        print(f"[🐳] Pulling image → {image}")
-
-        # If registry is private and PAT available
-        if GHCR_PAT:
-            client.login(username=GHCR_USER, password=GHCR_PAT, registry="ghcr.io")
-
+        print(f"[docker_manager] Pulling image: {image}")
         subprocess.run(["docker", "pull", image], check=True)
-        print(f"[✔] Image pulled successfully → {image}")
-
     except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Failed to pull Docker image: {image}\nError: {e}")
+        raise RuntimeError(f"Unable to pull image {image}: {e}")
 
 
 def generate_subdomain(cid: str):
-    """Return subdomain such as: cid123.localhost"""
+    """
+    Generate subdomain like: <cid>.localhost
+    """
     return f"{cid}.{BASE_DOMAIN}"
 
 
-# ---------------------------------------------------------------------------------------
-# 🔹 SPAWN CONTAINER
-# ---------------------------------------------------------------------------------------
+# ---------------------- SPAWN CONTAINER ----------------------
 
 def spawn(image: str, user_id: str, submission_id: str = None, ttl_seconds: int = 600):
     """
-    Spawn a container, Traefik-compatible, localhost subdomain-based.
+    Spawns a Docker container using deterministic GHCR image naming.
     """
-    print(f"[⚙] Spawning container for image → {image}")
-
-    # Pull image from GHCR
+    # 1. Pull image
     docker_pull(image)
 
-    # Use random host port as fallback (Traefik may not need it)
+    # 2. Allocate fallback port (Traefik not required, but supported)
     host_port = random.randint(20000, 40000)
 
-    # Subdomain for routing
-    cid_placeholder = "temp"
-    subdomain = generate_subdomain(cid_placeholder)
+    # 3. Temporary subdomain until container ID is known
+    temp_subdomain = f"temp.{BASE_DOMAIN}"
 
-    # Docker labels for Traefik auto-routing (if user adds Traefik later)
+    # 4. Traefik labels (optional)
     labels = {
         "traefik.enable": "true",
-        "traefik.http.routers.instaDock.rule": f"Host(`{subdomain}`)",
-        "traefik.http.services.instaDock.loadbalancer.server.port": "80",
+        "traefik.http.routers.instadock.rule": f"Host(`{temp_subdomain}`)",
+        "traefik.http.services.instadock.loadbalancer.server.port": "80",
     }
 
-    # Run container (no dangerous caps)
+    # 5. Run container
     container = client.containers.run(
         image,
         detach=True,
@@ -87,25 +67,28 @@ def spawn(image: str, user_id: str, submission_id: str = None, ttl_seconds: int 
         cap_drop=["ALL"],
         mem_limit="512m",
         nano_cpus=1_000_000_000,  # 1 CPU
-        network="bridge"
+        network="bridge",
     )
 
+    # 6. Get real CID
     cid = container.id[:12]
     subdomain = generate_subdomain(cid)
-    expires = (datetime.datetime.utcnow() + datetime.timedelta(seconds=ttl_seconds)).isoformat()
 
-    # Update labels after CID is known
-    container.reload()
-    container.attrs["Config"]["Labels"].update({
-        "traefik.http.routers.instaDock.rule": f"Host(`{subdomain}`)"
-    })
-    container.commit()
+    # 7. Update labels for Traefik routing
+    try:
+        subprocess.run([
+            "docker", "container", "update",
+            "--label-add", f"traefik.http.routers.instadock.rule=Host(`{subdomain}`)",
+            cid
+        ], check=True)
+    except Exception:
+        pass  # If Traefik not used, safe to ignore
 
-    print(f"[🚀] Container spawned → {cid}")
-    print(f"[🌐] URL → http://{subdomain}")
-    print(f"[⏳] Expires at → {expires}")
+    # 8. Compute expiry time
+    expires = (datetime.datetime.utcnow() +
+               datetime.timedelta(seconds=ttl_seconds)).isoformat()
 
-    # Save instance to DB
+    # 9. Save instance in DB
     save_instance(
         cid=cid,
         user_id=user_id,
@@ -116,35 +99,40 @@ def spawn(image: str, user_id: str, submission_id: str = None, ttl_seconds: int 
         expires_at=expires,
     )
 
+    print(f"[docker_manager] Spawned → {cid}")
+    print(f"[docker_manager] URL → http://{subdomain}")
+    print(f"[docker_manager] Expires → {expires}")
+
     return cid, f"http://{subdomain}", expires
 
 
-# ---------------------------------------------------------------------------------------
-# 🔹 STOP/REMOVE CONTAINER
-# ---------------------------------------------------------------------------------------
+# ---------------------- STOP / CLEANUP ----------------------
 
 def stop(cid: str):
-    """Stop & remove a container, then delete DB row."""
+    """
+    Stop and remove a container.
+    """
     try:
         container = client.containers.get(cid)
         container.remove(force=True)
-        print(f"[🛑] Removed container {cid}")
+        print(f"[docker_manager] Removed {cid}")
     except Exception:
-        print(f"[⚠] Could not remove container {cid} (might already be gone)")
+        print(f"[docker_manager] Could not remove {cid} (maybe already gone)")
+
     delete_instance(cid)
 
 
-# ---------------------------------------------------------------------------------------
-# 🔹 LIST & STATS
-# ---------------------------------------------------------------------------------------
+# ---------------------- LIST / STATS ----------------------
 
 def list_containers():
-    """Return all running containers with CPU/MEM stats."""
-    containers = []
+    """
+    List all running containers with stats.
+    """
+    out = []
     for c in client.containers.list():
         try:
             stats = c.stats(stream=False)
-            containers.append({
+            out.append({
                 "id": c.short_id,
                 "name": c.name,
                 "image": c.image.tags[0] if c.image.tags else "<none>",
@@ -154,12 +142,13 @@ def list_containers():
             })
         except Exception:
             continue
-    return containers
+
+    return out
 
 
 def system_stats():
     return {
         "cpu": psutil.cpu_percent(),
         "memory": psutil.virtual_memory().percent,
-        "total_memory": round(psutil.virtual_memory().total / (1024 * 1024 * 1024), 1)
+        "total_memory": round(psutil.virtual_memory().total / (1024 ** 3), 1),
     }

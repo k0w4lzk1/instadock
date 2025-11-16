@@ -38,26 +38,14 @@ jobs:
 
       - name: Build Docker image
         run: |
-          # Extract short submission ID from branch name
           SHORT_ID="${GITHUB_REF_NAME##*/}"
-          
           IMAGE="ghcr.io/${{ github.repository_owner }}/instadock_${SHORT_ID}:latest"
-
-          echo "Building image: $IMAGE"
+          echo "Building $IMAGE"
           docker build -t "$IMAGE" "${{ steps.finddir.outputs.subpath }}"
 
-          echo "Pushing image: $IMAGE"
-          docker push "$IMAGE"
-
-      - name: Notify backend (save built image)
+      - name: Push Docker image
         run: |
           SHORT_ID="${GITHUB_REF_NAME##*/}"
-          PAYLOAD=$(jq -n \
-            --arg sub "$SHORT_ID" \
-            --arg img "instadock_${SHORT_ID}" \
-            '{submission_id: $sub, image_tag: $img}')
-
-          curl -X POST \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD" \
-            http://localhost:8000/submission/image-callback
+          IMAGE="ghcr.io/${{ github.repository_owner }}/instadock_${SHORT_ID}:latest"
+          echo "Pushing $IMAGE"
+          docker push "$IMAGE"

@@ -3,12 +3,13 @@ from pathlib import Path
 
 DB_PATH = Path(__file__).resolve().parent / "instadock.db"
 
+
 def init_db():
-    """Initialize all required tables."""
+    """Initialize database tables."""
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
 
-        # --- Users ---
+        # Users
         c.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id TEXT PRIMARY KEY,
@@ -18,7 +19,7 @@ def init_db():
         )
         """)
 
-        # --- Submissions ---
+        # Submissions
         c.execute("""
         CREATE TABLE IF NOT EXISTS submissions (
             id TEXT PRIMARY KEY,
@@ -26,33 +27,32 @@ def init_db():
             branch TEXT NOT NULL,
             status TEXT NOT NULL,
             source TEXT,
-            image_tag TEXT,               -- GHCR image URL/tag
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id)
+            FOREIGN KEY (user_id) REFERENCES users(id)
         )
         """)
 
-        # --- Instances ---
+        # Instances
         c.execute("""
         CREATE TABLE IF NOT EXISTS instances (
-            cid TEXT PRIMARY KEY,         -- Docker container ID (short)
+            cid TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
-            submission_id TEXT,           -- Optional: tie instance to submission
+            submission_id TEXT,
             image TEXT NOT NULL,
-            subdomain TEXT NOT NULL,      -- e.g. cid123.localhost
-            port INTEGER,                 -- only used if fallback to ports
+            subdomain TEXT NOT NULL,
+            port INTEGER,
             expires_at TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (submission_id) REFERENCES submissions (id)
+            FOREIGN KEY (submission_id) REFERENCES submissions(id)
         )
         """)
 
         conn.commit()
 
 
-# --- Submission Helpers --------------------------------------------------
+# ---------------- SUBMISSIONS ----------------
 
-def record_submission(sub_id: str, user_id: str, branch: str, status: str, source: str):
+def record_submission(sub_id, user_id, branch, status, source):
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("""
             INSERT INTO submissions (id, user_id, branch, status, source)
@@ -61,22 +61,13 @@ def record_submission(sub_id: str, user_id: str, branch: str, status: str, sourc
         conn.commit()
 
 
-def update_submission_status(sub_id: str, new_status: str):
+def update_submission_status(sub_id, status):
     with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("UPDATE submissions SET status=? WHERE id=?", (new_status, sub_id))
+        conn.execute("UPDATE submissions SET status=? WHERE id=?", (status, sub_id))
         conn.commit()
 
 
-def set_submission_image(sub_id: str, image_tag: str):
-    """Store GHCR image tag built by GitHub Actions."""
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("""
-            UPDATE submissions SET image_tag=? WHERE id=?
-        """, (image_tag, sub_id))
-        conn.commit()
-
-
-def get_submission(sub_id: str):
+def get_submission(sub_id):
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute("SELECT * FROM submissions WHERE id=?", (sub_id,)).fetchone()
@@ -90,31 +81,31 @@ def list_pending_submissions():
         return [dict(r) for r in rows]
 
 
-# --- Instance Helpers ------------------------------------------------------
+# ---------------- INSTANCES ----------------
 
-def save_instance(cid: str, user_id: str, submission_id: str, image: str, subdomain: str, port: int, expires_at: str):
+def save_instance(cid, user_id, submission_id, image, subdomain, port, expires_at):
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("""
-            INSERT INTO instances (cid, user_id, submission_id, image, subdomain, port, expires_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO instances (cid, user_id, submission_id, image, subdomain, port, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (cid, user_id, submission_id, image, subdomain, port, expires_at))
         conn.commit()
 
 
-def delete_instance(cid: str):
+def delete_instance(cid):
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("DELETE FROM instances WHERE cid=?", (cid,))
         conn.commit()
 
 
-def get_instance(cid: str):
+def get_instance(cid):
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute("SELECT * FROM instances WHERE cid=?", (cid,)).fetchone()
         return dict(row) if row else None
 
 
-def list_instances_for_user(user_id: str):
+def list_instances_for_user(user_id):
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute("""
@@ -130,5 +121,5 @@ def list_all_instances():
         return [dict(r) for r in rows]
 
 
-# Initialize database on import
+# Initialize DB on import
 init_db()

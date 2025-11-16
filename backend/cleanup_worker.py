@@ -1,19 +1,17 @@
 import time
 import datetime
 import sqlite3
-import subprocess
 from pathlib import Path
 
-from backend.db import DB_PATH, get_instance, delete_instance
-from backend.docker_manager import stop as stop_container
+from .db import DB_PATH, get_instance, delete_instance
+from .docker_manager import stop as stop_container
+
+CHECK_INTERVAL = 30   # seconds between cleanup cycles
 
 
-CHECK_INTERVAL = 30  # seconds — how often to check expiring instances
-
-
-# -------------------------------------------------------------------
-# 🟩 CLEANUP EXPIRED INSTANCES
-# -------------------------------------------------------------------
+# ---------------------------------------------------------
+# CLEANUP EXPIRED INSTANCES
+# ---------------------------------------------------------
 
 def cleanup_expired_instances():
     """
@@ -32,60 +30,31 @@ def cleanup_expired_instances():
         try:
             exp_dt = datetime.datetime.fromisoformat(exp)
         except Exception:
-            print(f"[⚠] Invalid timestamp for {cid}, deleting entry.")
+            print(f"[cleanup] Invalid timestamp for {cid} — deleting entry.")
             stop_container(cid)
             continue
 
         if exp_dt <= now:
-            print(f"[⏳] TTL expired → removing instance {cid}")
+            print(f"[cleanup] TTL expired → removing instance {cid}")
             stop_container(cid)
 
 
-# -------------------------------------------------------------------
-# 🟩 CLEANUP OLD LOCAL IMAGES (optional)
-# -------------------------------------------------------------------
-
-def cleanup_old_images():
-    """
-    Remove old GHCR images stored locally to free space.
-    Only removes images in ghcr.io/<user>/*
-    """
-    try:
-        result = subprocess.run(
-            ["docker", "images", "-q", "ghcr.io/*"],
-            capture_output=True,
-            text=True
-        )
-
-        imgs = result.stdout.strip().split("\n")
-
-        for img in imgs:
-            if img:
-                subprocess.run(["docker", "rmi", "-f", img])
-                print(f"[🧹] Removed local GHCR image: {img}")
-
-    except Exception as e:
-        print(f"[⚠] GHCR cleanup failed: {e}")
-
-
-# -------------------------------------------------------------------
-# 🟩 MAIN WORKER LOOP
-# -------------------------------------------------------------------
+# ---------------------------------------------------------
+# BACKGROUND WORKER LOOP
+# ---------------------------------------------------------
 
 def start_cleanup_worker():
     """
-    Main cleanup loop.
-    Run this in a separate background process or thread.
+    Background loop.  
+    Safe to run as a thread.  
+    Will never crash the main app.
     """
-    print("[🧼 InstaDock Cleanup Worker] Started.")
+    print("[cleanup] Worker started.")
 
     while True:
         try:
             cleanup_expired_instances()
         except Exception as e:
-            print(f"[⚠] Instance cleanup error: {e}")
-
-        # Optional: run less frequently
-        # cleanup_old_images()
+            print(f"[cleanup] Error: {e}")
 
         time.sleep(CHECK_INTERVAL)
