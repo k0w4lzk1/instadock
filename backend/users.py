@@ -1,25 +1,37 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 from passlib.context import CryptContext
-import sqlite3, uuid, os, jwt, datetime
+import sqlite3
+import uuid
 from .db import DB_PATH
+from .auth import create_token
 
 router = APIRouter()
+
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
-SECRET_KEY = os.getenv("JWT_SECRET", "super-secret-key")
 
 
-# --- Utility: create access token ---
-def create_access_token(data: dict):
-    data["exp"] = datetime.datetime.utcnow() + datetime.timedelta(hours=6)
-    return jwt.encode(data, SECRET_KEY, algorithm="HS256")
+# --------------------------------------------------------------------
+# 🟩 REQUEST MODELS
+# --------------------------------------------------------------------
 
-
-# --- Request Models ---
 class RegisterReq(BaseModel):
     username: str
     password: str
-    role: str = "user"
+
+    @validator("username")
+    def validate_username(cls, v):
+        if len(v) < 3:
+            raise ValueError("Username must be at least 3 characters")
+        if any(ch in v for ch in " /\\'\"#?%{}()@!$^&*"):
+            raise ValueError("Invalid characters in username")
+        return v
+
+    @validator("password")
+    def validate_password(cls, v):
+        if len(v) < 6:
+            raise ValueError("Password must be at least 6 characters")
+        return v
 
 
 class LoginReq(BaseModel):
@@ -27,70 +39,100 @@ class LoginReq(BaseModel):
     password: str
 
 
-# --- Register Endpoint ---
+# --------------------------------------------------------------------
+# 🟩 REGISTER
+# --------------------------------------------------------------------
+
 @router.post("/register")
 def register(req: RegisterReq):
     with sqlite3.connect(DB_PATH) as conn:
-        c = conn.cursor()
         try:
-            user_id = str(uuid.uuid4())
-            hash_ = pwd_context.hash(req.password)
-            c.execute(
-                "INSERT INTO users (id, username, password_hash, role) VALUES (?,?,?,?)",
-                (user_id, req.username, hash_, req.role),
-            )
-            conn.commit()
-        except sqlite3.IntegrityError:
-            raise HTTPException(status_code=400, detail="Username taken")
+            c = conn.cursor()
 
-    # Optionally issue a token immediately after register
-    token = create_access_token({"sub": user_id, "role": req.role})
+            user_id = str(uuid.uuid4())
+            password_hash = pwd_context.hash(req.password)
+
+            # Force role=user. Admin cannot be self-created.
+            c.execute("""
+                INSERT INTO users (id, username, password_hash, role)
+                VALUES (?, ?, ?, 'user')
+            """, (user_id, req.username, password_hash))
+
+            conn.commit()
+
+        except sqlite3.IntegrityError:
+            raise HTTPException(status_code=400, detail="Username already exists")
+
+    # Create secure token
+    token = create_token(user_id, "user")
+
     return {
-        "msg": "User created",
+        "msg": "User registered",
         "access_token": token,
         "token_type": "bearer",
     }
 
 
-# --- Login Endpoint ---
+# --------------------------------------------------------------------
+# 🟩 LOGIN
+# --------------------------------------------------------------------
+
 @router.post("/login")
 def login(req: LoginReq):
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
-        c.execute("SELECT id, password_hash, role FROM users WHERE username=?", (req.username,))
+        c.execute(
+            "SELECT id, password_hash, role FROM users WHERE username=?",
+            (req.username,)
+        )
         row = c.fetchone()
+
         if not row:
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-        uid, hash_, role = row
-        if not pwd_context.verify(req.password, hash_):
-            raise HTTPException(status_code=401, detail="Invalid credentials")
+            raise HTTPException(401, "Invalid username or password")
 
-    token = create_access_token({"sub": uid, "role": role})
-    return {"access_token": token, "token_type": "bearer"}
+        user_id, password_hash, role = row
+
+        if not pwd_context.verify(req.password, password_hash):
+            raise HTTPException(401, "Invalid username or password")
+
+    # Return signed token
+    token = create_token(user_id, role)
+
+    return {
+        "access_token": token,
+        "token_type": "bearer"
+    }
 
 
-###---- Helper Module -----
+# --------------------------------------------------------------------
+# 🟩 ENSURE DEFAULT ADMIN (SAFE)
+# --------------------------------------------------------------------
+
 def ensure_default_admin():
-    """Create a default admin user if none exists."""
-    from passlib.context import CryptContext
-    import uuid
-
-    pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
-
+    """
+    Create a default admin if none exists.
+    ONLY way admin can exist.
+    """
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         c.execute("SELECT id FROM users WHERE role='admin'")
         exists = c.fetchone()
-        if not exists:
-            user_id = str(uuid.uuid4())
-            username = "admin"
-            password = "admin123"  # default password; change it immediately after login
-            hashed = pwd_context.hash(password)
-            c.execute(
-                "INSERT INTO users (id, username, password_hash, role) VALUES (?,?,?,?)",
-                (user_id, username, hashed, "admin"),
-            )
-            conn.commit()
-            print(f"[⚙️ InstaDock] Default admin created → username='admin' password='admin123'")
-        else:
-            print("[⚙️ InstaDock] Admin user already exists.")
+
+        if exists:
+            print("[⚙️ InstaDock] Admin exists.")
+            return
+
+        user_id = str(uuid.uuid4())
+        username = "admin"
+        password = "admin123"
+
+        hashed = pwd_context.hash(password)
+
+        c.execute("""
+            INSERT INTO users (id, username, password_hash, role)
+            VALUES (?, ?, ?, 'admin')
+        """, (user_id, username, hashed))
+
+        conn.commit()
+
+        print(f"[⚙️ InstaDock] Default admin created → username='admin' password='admin123' (CHANGE IT!)")

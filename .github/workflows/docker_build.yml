@@ -1,4 +1,5 @@
-name: 🐳 Build Submission Image
+---
+name: Build Submission Image
 
 on:
   push:
@@ -17,25 +18,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Determine submission directory
-        id: subdir
+      - name: Detect submission directory
+        id: finddir
         run: |
-          # Example ref: submission/abcd1234/efgh5678
-          BRANCH="${GITHUB_REF_NAME}"
-
-          SUBUSER=$(echo "$BRANCH" | cut -d'/' -f2)
-          SUBID=$(echo "$BRANCH" | cut -d'/' -f3)
-
-          SUBPATH="submissions/$SUBUSER/$SUBID"
-
-          echo "subpath=$SUBPATH" >> $GITHUB_OUTPUT
-
-      - name: Verify submission folder exists
-        run: |
-          if [ ! -d "${{ steps.subdir.outputs.subpath }}" ]; then
-            echo "❌ Submission directory not found!"
+          SUBDIR=$(find submissions -mindepth 2 -maxdepth 2 -type d | head -n 1)
+          if [ -z "$SUBDIR" ]; then
+            echo "Submission directory not found."
             exit 1
           fi
+          echo "subpath=$SUBDIR" >> $GITHUB_OUTPUT
+          echo "Found submission directory: $SUBDIR"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -44,9 +36,28 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build submission image
+      - name: Build Docker image
         run: |
-          IMAGE="ghcr.io/${{ github.repository_owner }}/instadock_${GITHUB_REF_NAME##*/}:latest"
-          docker build -t "$IMAGE" "${{ steps.subdir.outputs.subpath }}"
+          # Extract short submission ID from branch name
+          SHORT_ID="${GITHUB_REF_NAME##*/}"
+          
+          IMAGE="ghcr.io/${{ github.repository_owner }}/instadock_${SHORT_ID}:latest"
+
+          echo "Building image: $IMAGE"
+          docker build -t "$IMAGE" "${{ steps.finddir.outputs.subpath }}"
+
+          echo "Pushing image: $IMAGE"
           docker push "$IMAGE"
 
+      - name: Notify backend (save built image)
+        run: |
+          SHORT_ID="${GITHUB_REF_NAME##*/}"
+          PAYLOAD=$(jq -n \
+            --arg sub "$SHORT_ID" \
+            --arg img "instadock_${SHORT_ID}" \
+            '{submission_id: $sub, image_tag: $img}')
+
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            http://localhost:8000/submission/image-callback
