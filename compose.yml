@@ -18,7 +18,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
-      - instadock-proxy
+      - instadock-proxy # Attaches to the shared network
 
   # ------------------------------------
   # 2. Backend Service
@@ -28,30 +28,32 @@ services:
       context: .
       dockerfile: docker/backend.Dockerfile 
     environment:
+      # FIX 1: Set the PROXY_HOST environment variable for Traefik URL generation
       - PROXY_HOST=instadock.test 
       - GHCR_USERNAME=k0w4lzk1 
       # ... other environment variables
     ports:
       - "8000:8000"
     networks:
-      - instadock-proxy 
+      - instadock-proxy # Attaches to the shared network
 
   # ------------------------------------
-  # 3. Frontend Service (COMPLETED FIX)
+  # 3. Frontend Service 
   # ------------------------------------
   frontend:
     build:
-      context: ./frontend  # Tells Docker Compose where the code lives
-      dockerfile: Dockerfile # Assumes the Dockerfile is named 'Dockerfile' in the frontend folder
+      context: ./frontend
+      dockerfile: Dockerfile
     ports:
       - "3000:3000"
     networks:
-      - instadock-proxy 
-
+      - instadock-proxy
 
 # ------------------------------------
-# 4. Networks Definition
+# 4. Networks Definition (CRITICAL FIX)
 # ------------------------------------
 networks:
   instadock-proxy:
+    # Docker Compose will create the 'instadock-proxy' network, making it available 
+    # to the Docker SDK call inside the backend container.
     external: false

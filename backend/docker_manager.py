@@ -12,15 +12,14 @@ from .db import save_instance, delete_instance, get_instance, update_instance_st
 
 # ---------------------- CONFIG ----------------------
 
-# FIX 1: Prioritize PROXY_HOST for the subdomain URL base, falling back to BASE_DOMAIN/localhost
-BASE_DOMAIN = os.getenv("PROXY_HOST", os.getenv("BASE_DOMAIN", "localhost")) 
-GHCR_USER = os.getenv("GHCR_USERNAME", "k0w4lzk1")  # your GitHub username
-# SENSITIVE DATA ALERT: TOKEN MUST BE SET VIA ENVIRONMENT VARIABLE (e.g., export GHCR_PULL_TOKEN='...')
+# FIX 1: Set BASE_DOMAIN by checking PROXY_HOST first (essential for Traefik fix)
+BASE_DOMAIN = os.getenv("PROXY_HOST", os.getenv("BASE_DOMAIN", "localhost"))
+GHCR_USER = os.getenv("GHCR_USERNAME", "k0w4lzk1")
+# SECURITY FIX: Token MUST be loaded from environment and NOT hardcoded.
 GHCR_PULL_TOKEN = os.getenv("GHCR_PULL_TOKEN","") 
 GHCR_REGISTRY = f"ghcr.io/{GHCR_USER}"
 
 client = docker.from_env()
-
 
 # ---------------------- HELPERS ----------------------
 
@@ -48,19 +47,17 @@ def docker_pull(image: str):
         pull_process = subprocess.run(
             ["docker", "pull", image], 
             check=True,
-            stdout=subprocess.PIPE, # Capture stdout
-            stderr=subprocess.PIPE # Capture stderr
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE
         )
         print(f"[docker_manager] Docker pull successful. Output: {pull_process.stdout.decode().strip()}")
         
     except subprocess.CalledProcessError as e: 
-        # FIX 5: Use error output for better debugging
         detailed_error = e.stderr.decode('utf-8') if e.stderr else 'Unknown Docker command failure.'
         if e.cmd[0] == 'docker' and e.cmd[1] == 'login':
             login_error = e.stderr.decode('utf-8') if e.stderr else 'Unknown login failure.'
             raise RuntimeError(f"GHCR authentication failed (check GHCR_PULL_TOKEN): {login_error}")
 
-        # Provide a clearer error message including the captured daemon response
         raise RuntimeError(f"Unable to pull image {image} (manifest unknown/permissions issue): {detailed_error.strip()}")
 
     except Exception as e:
@@ -105,14 +102,12 @@ def spawn(image: str, user_id: str, submission_id: str = None, ttl_seconds: int 
     # 4. Traefik labels (optional) - Set the final Traefik rule on RUN
     labels = {
         "traefik.enable": "true",
-        # FIX: Use the stable short_uuid_id for the host rule.
         "traefik.http.routers.instadock.rule": f"Host(`{short_uuid_id}.{BASE_DOMAIN}`)", 
         # The internal app runs on 8000 (from start.sh default)
         "traefik.http.services.instadock.loadbalancer.server.port": "8000",
     }
 
     # 5. Run container
-    # FIX: Change port mapping from 80 to the application default 8000
     container = client.containers.run(
         image,
         detach=True,
@@ -122,7 +117,7 @@ def spawn(image: str, user_id: str, submission_id: str = None, ttl_seconds: int 
         cap_drop=["ALL"],
         mem_limit="512m",
         nano_cpus=1_000_000_000,  # 1 CPU
-        network="instadock-proxy", # <-- FIX: Spawn container onto the shared Traefik network
+        network="instadock-proxy", # FIX: Spawn container onto the shared Traefik network
     )
 
     # 6. Get real CID (short ID)
@@ -132,16 +127,14 @@ def spawn(image: str, user_id: str, submission_id: str = None, ttl_seconds: int 
     expires = (datetime.datetime.utcnow() +
                datetime.timedelta(seconds=ttl_seconds)).isoformat()
 
-    # 8. Determine the correct subdomain string to save in the DB (FIX for frontend URL display)
-    subdomain_to_save = initial_subdomain # Default: Traefik URL (e.g., d655aa10.instadock.test)
+    # 8. Determine the correct subdomain string to save in the DB
+    subdomain_to_save = initial_subdomain 
     url_to_display = f"http://{initial_subdomain}"
     
-    # FIX: Revert the local override if BASE_DOMAIN is NOT 'localhost' 
-    # (i.e., if it is set to 'instadock.test')
     if BASE_DOMAIN == "localhost":
-        # Only use the port if PROXY_HOST is NOT set and we default to localhost
+        # If PROXY_HOST is not set, use the direct port access URL
         subdomain_to_save = f"{BASE_DOMAIN}:{host_port}"
-        url_to_display = f"http://{subdomain_to_save}" # e.g., http://localhost:21409
+        url_to_display = f"http://{subdomain_to_save}" 
 
     # 9. Save instance in DB 
     save_instance(
@@ -162,7 +155,7 @@ def spawn(image: str, user_id: str, submission_id: str = None, ttl_seconds: int 
 
 
 # ---------------------- STOP / CLEANUP / START / RESTART ----------------------
-# (Rest of the file is unchanged)
+
 def remove(cid: str):
     """
     Stop and permanently remove a container and its DB entry.
@@ -232,7 +225,7 @@ def restart(cid: str):
 
 
 # ---------------------- LIST / STATS ----------------------
-# (Rest of the file is unchanged)
+
 def list_containers():
     """
     List all running and stopped containers with stats.
@@ -251,22 +244,12 @@ def list_containers():
                 "mem": round(stats["memory_stats"]["usage"] / (1024 * 1024), 2)
             })
         except Exception:
-            # Handle cases where container is gone or stats not available
-            out.append({
-                "id": c.short_id,
-                "name": c.name,
-                "image": c.image.tags[0] if c.image.tags else "<none>",
-                "status": c.status, 
-                "cpu": 0,
-                "mem": 0
-            })
             continue
 
     return out
 
 
 def system_stats():
-    # Helper to provide system statistics
     return {
         "cpu_percent": psutil.cpu_percent(),
         "memory_percent": psutil.virtual_memory().percent,
