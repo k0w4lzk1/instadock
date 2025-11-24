@@ -1,0 +1,4 @@
+{
+  "entrypoint": "./start.sh",
+  "ports": [8080]
+}
