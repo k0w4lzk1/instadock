@@ -1,15 +1,59 @@
-version: "3.8"
+version: '3.8'
+
 services:
+  # ------------------------------------
+  # 1. Traefik Service (The Reverse Proxy)
+  # ------------------------------------
+  traefik:
+    image: traefik:v2.10
+    container_name: traefik
+    command:
+      # Enable Docker provider and expose to public ports
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80 # Traefik listens on port 80 for HTTP requests
+    ports:
+      - "80:80"  # Map host port 80 to container port 80
+      - "8080:8080" # Dashboard (optional, for debugging)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - instadock-proxy # Traefik must be on this network
+
+  # ------------------------------------
+  # 2. Backend Service (The FastAPI App)
+  # ------------------------------------
   backend:
     build:
-      context: ./backend
-    command: uvicorn main:app --host 0.0.0.0 --port 8000
-    volumes:
-      - ./backend:/app
-      - /var/run/docker.sock:/var/run/docker.sock
+      context: .
+      dockerfile: docker/backend.Dockerfile # Assuming you have a backend Dockerfile
     environment:
-      - JWT_SECRET=super-secret-key
-      - ACTUAL_REPO=https://github.com/k0w4lzk1/InstaDock
-      - PROXY_HOST=localhost
+      - PROXY_HOST=instadock.test # Essential for subdomain generation
+      - GHCR_USERNAME=k0w4lzk1 
+      # ... other variables
     ports:
-      - "8000:8000"
+      - "8000:8000" # Optional, but good for direct API access
+    networks:
+      - instadock-proxy # Backend must also be on this network
+
+  # ------------------------------------
+  # 3. Frontend Service (The Next.js App)
+  # ------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    networks:
+      - instadock-proxy # Frontend must also be on this network
+
+
+# ------------------------------------
+# 4. Networks Definition
+# ------------------------------------
+networks:
+  instadock-proxy:
+    # Create an external bridge network for Traefik and all services
+    external: false

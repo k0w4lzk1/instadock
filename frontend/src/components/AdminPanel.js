@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getToken } from "@/lib/auth";
+import { deleteSubmission, approveSubmission, rejectSubmission } from "@/lib/api"; // Updated imports
 
 export default function AdminPanel() {
   const [submissions, setSubmissions] = useState([]);
@@ -26,19 +27,33 @@ export default function AdminPanel() {
     }
   }
 
-  // 🧱 Approve or Reject Submission
+  // 🧱 Approve, Reject, or Delete Submission
   async function handleAction(subId, action) {
-    const token = getToken();
-    const res = await fetch(`http://127.0.0.1:8000/admin/${action}/${subId}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-    });
-
-    if (res.ok) {
-      setSubmissions((prev) => prev.filter((s) => s.id !== subId));
+    let actionFn;
+    let message;
+    
+    if (action === "delete") {
+        if (!window.confirm("WARNING: Are you sure you want to PERMANENTLY DELETE this submission? This cannot be undone and deletes the git branch.")) {
+            return;
+        }
+        actionFn = deleteSubmission;
+        message = "Failed to permanently delete submission.";
+    } else if (action === "approve") {
+        actionFn = approveSubmission;
+        message = "Failed to approve submission.";
+    } else if (action === "reject") {
+        actionFn = rejectSubmission;
+        message = "Failed to reject submission.";
     } else {
-      const err = await res.json().catch(() => ({}));
-      alert(err.detail || "Failed to perform action");
+        return;
+    }
+
+    try {
+        await actionFn(subId);
+        setSubmissions((prev) => prev.filter((s) => s.id !== subId));
+    } catch (err) {
+      const errMsg = err.message.includes('404') ? 'Submission not found.' : err.message;
+      alert(`${message} Error: ${errMsg}`);
     }
   }
 
@@ -82,6 +97,12 @@ export default function AdminPanel() {
                   className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded-md"
                 >
                   Reject
+                </button>
+                <button
+                  onClick={() => handleAction(sub.id, "delete")}
+                  className="px-3 py-1 bg-gray-700 hover:bg-gray-800 rounded-md text-red-400 border border-red-500"
+                >
+                  Delete (Perm)
                 </button>
               </div>
             </div>

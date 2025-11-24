@@ -260,3 +260,26 @@ def reject_submission(sub_id: str):
 
     finally:
         shutil.rmtree(reject_clone, ignore_errors=True)
+
+# FIX 2: New endpoint for permanent deletion of a submission
+# -------------------------------------------------------------------
+# PERMANENTLY DELETE SUBMISSION (New - Calls reject logic + removes DB entry)
+# -------------------------------------------------------------------
+
+def delete_submission(sub_id: str):
+    """
+    Permanently delete a submission. This includes deleting the git branch
+    and removing the record from the database.
+    """
+    sub = get_submission(sub_id)
+    if not sub:
+        raise RuntimeError("Submission not found")
+
+    # Rejecting the submission handles the deletion of the remote git branch.
+    reject_submission(sub_id)
+
+    # Delete the record from the database
+    from .db import delete_submission as db_delete_submission
+    db_delete_submission(sub_id)
+
+    return True

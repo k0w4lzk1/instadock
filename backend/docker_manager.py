@@ -2,15 +2,21 @@ import docker
 import random
 import os
 import datetime
-import subprocess
+import subprocess 
 import psutil
+import uuid # Needed for stable container name/subdomain
+import time # IMPORT for delay
 
-from .db import save_instance, delete_instance
+# FR-4.0: Import DB update function
+from .db import save_instance, delete_instance, get_instance, update_instance_status
 
 # ---------------------- CONFIG ----------------------
 
-BASE_DOMAIN = os.getenv("BASE_DOMAIN", "localhost")
+# FIX 1: Prioritize PROXY_HOST for the subdomain URL base, falling back to BASE_DOMAIN/localhost
+BASE_DOMAIN = os.getenv("PROXY_HOST", os.getenv("BASE_DOMAIN", "localhost")) 
 GHCR_USER = os.getenv("GHCR_USERNAME", "k0w4lzk1")  # your GitHub username
+# SENSITIVE DATA ALERT: TOKEN MUST BE SET VIA ENVIRONMENT VARIABLE (e.g., export GHCR_PULL_TOKEN='...')
+GHCR_PULL_TOKEN = os.getenv("GHCR_PULL_TOKEN","") 
 GHCR_REGISTRY = f"ghcr.io/{GHCR_USER}"
 
 client = docker.from_env()
@@ -20,19 +26,52 @@ client = docker.from_env()
 
 def docker_pull(image: str):
     """
-    Pull an image from GHCR.
+    Pulls an image from GHCR using authenticated access if a token is available.
     """
     try:
         print(f"[docker_manager] Pulling image: {image}")
-        subprocess.run(["docker", "pull", image], check=True)
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Unable to pull image {image}: {e}")
+        
+        if GHCR_PULL_TOKEN and GHCR_USER:
+            print("[docker_manager] Attempting authenticated pull...")
+            
+            # Use secure subprocess.run with input to pass password
+            login_process = subprocess.run(
+                ['docker', 'login', 'ghcr.io', '--username', GHCR_USER, '--password-stdin'],
+                input=GHCR_PULL_TOKEN.encode('utf-8'),
+                check=True, 
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE
+            )
+            print("[docker_manager] Docker login successful.")
+        
+        # Execute the pull command, capturing output for better error reporting
+        pull_process = subprocess.run(
+            ["docker", "pull", image], 
+            check=True,
+            stdout=subprocess.PIPE, # Capture stdout
+            stderr=subprocess.PIPE # Capture stderr
+        )
+        print(f"[docker_manager] Docker pull successful. Output: {pull_process.stdout.decode().strip()}")
+        
+    except subprocess.CalledProcessError as e: 
+        # FIX 5: Use error output for better debugging
+        detailed_error = e.stderr.decode('utf-8') if e.stderr else 'Unknown Docker command failure.'
+        if e.cmd[0] == 'docker' and e.cmd[1] == 'login':
+            login_error = e.stderr.decode('utf-8') if e.stderr else 'Unknown login failure.'
+            raise RuntimeError(f"GHCR authentication failed (check GHCR_PULL_TOKEN): {login_error}")
+
+        # Provide a clearer error message including the captured daemon response
+        raise RuntimeError(f"Unable to pull image {image} (manifest unknown/permissions issue): {detailed_error.strip()}")
+
+    except Exception as e:
+        raise RuntimeError(f"Error during Docker pull process: {e}")
 
 
 def generate_subdomain(cid: str):
     """
-    Generate subdomain like: <cid>.localhost
+    Generate subdomain like: <cid>.instadock.test or <cid>.localhost
     """
+    # Use the first 8 characters of the container ID for a shorter subdomain part
     return f"{cid}.{BASE_DOMAIN}"
 
 
@@ -40,115 +79,196 @@ def generate_subdomain(cid: str):
 
 def spawn(image: str, user_id: str, submission_id: str = None, ttl_seconds: int = 600):
     """
-    Spawns a Docker container using deterministic GHCR image naming.
+    Spawns a Docker container and correctly sets Traefik labels.
     """
+    
+    # FIX: Add a short delay to allow the CI/CD pipeline (GitHub Actions) 
+    # to finish building and pushing the image to GHCR.
+    print("[docker_manager] Waiting 15 seconds for CI/CD image push to complete...")
+    time.sleep(15) 
+    print("[docker_manager] Delay finished. Attempting image pull.")
+
     # 1. Pull image
     docker_pull(image)
 
     # 2. Allocate fallback port (Traefik not required, but supported)
     host_port = random.randint(20000, 40000)
 
-    # 3. Temporary subdomain until container ID is known
-    temp_subdomain = f"temp.{BASE_DOMAIN}"
+    # 3. Generate a stable container name/subdomain from the start.
+    container_uuid = str(uuid.uuid4())
+    container_name = f"instadock-{container_uuid}"
+    
+    # Use container_uuid short ID for stability and DNS/Traefik rule
+    short_uuid_id = container_uuid[:8] 
+    initial_subdomain = generate_subdomain(short_uuid_id) 
 
-    # 4. Traefik labels (optional)
+    # 4. Traefik labels (optional) - Set the final Traefik rule on RUN
     labels = {
         "traefik.enable": "true",
-        "traefik.http.routers.instadock.rule": f"Host(`{temp_subdomain}`)",
-        "traefik.http.services.instadock.loadbalancer.server.port": "80",
+        # FIX: Use the stable short_uuid_id for the host rule.
+        "traefik.http.routers.instadock.rule": f"Host(`{short_uuid_id}.{BASE_DOMAIN}`)", 
+        # The internal app runs on 8000 (from start.sh default)
+        "traefik.http.services.instadock.loadbalancer.server.port": "8000",
     }
 
     # 5. Run container
+    # FIX: Change port mapping from 80 to the application default 8000
     container = client.containers.run(
         image,
         detach=True,
-        ports={"80/tcp": host_port},
+        ports={"8000/tcp": host_port}, # Container port 8000 mapped to host port
         labels=labels,
+        name=container_name, # Set a stable name
         cap_drop=["ALL"],
         mem_limit="512m",
         nano_cpus=1_000_000_000,  # 1 CPU
-        network="bridge",
+        network="instadock-proxy", # <-- FIX: Spawn container onto the shared Traefik network
     )
 
-    # 6. Get real CID
+    # 6. Get real CID (short ID)
     cid = container.id[:12]
-    subdomain = generate_subdomain(cid)
-
-    # 7. Update labels for Traefik routing
-    try:
-        subprocess.run([
-            "docker", "container", "update",
-            "--label-add", f"traefik.http.routers.instadock.rule=Host(`{subdomain}`)",
-            cid
-        ], check=True)
-    except Exception:
-        pass  # If Traefik not used, safe to ignore
-
-    # 8. Compute expiry time
+    
+    # 7. Compute expiry time
     expires = (datetime.datetime.utcnow() +
                datetime.timedelta(seconds=ttl_seconds)).isoformat()
 
-    # 9. Save instance in DB
+    # 8. Determine the correct subdomain string to save in the DB (FIX for frontend URL display)
+    subdomain_to_save = initial_subdomain # Default: Traefik URL (e.g., d655aa10.instadock.test)
+    url_to_display = f"http://{initial_subdomain}"
+    
+    # FIX: Revert the local override if BASE_DOMAIN is NOT 'localhost' 
+    # (i.e., if it is set to 'instadock.test')
+    if BASE_DOMAIN == "localhost":
+        # Only use the port if PROXY_HOST is NOT set and we default to localhost
+        subdomain_to_save = f"{BASE_DOMAIN}:{host_port}"
+        url_to_display = f"http://{subdomain_to_save}" # e.g., http://localhost:21409
+
+    # 9. Save instance in DB 
     save_instance(
         cid=cid,
         user_id=user_id,
         submission_id=submission_id,
         image=image,
-        subdomain=subdomain,
+        subdomain=subdomain_to_save, 
         port=host_port,
         expires_at=expires,
     )
 
     print(f"[docker_manager] Spawned → {cid}")
-    print(f"[docker_manager] URL → http://{subdomain}")
+    print(f"[docker_manager] URL → {url_to_display}")
     print(f"[docker_manager] Expires → {expires}")
 
-    return cid, f"http://{subdomain}", expires
+    return cid, url_to_display, expires
 
 
-# ---------------------- STOP / CLEANUP ----------------------
-
-def stop(cid: str):
+# ---------------------- STOP / CLEANUP / START / RESTART ----------------------
+# (Rest of the file is unchanged)
+def remove(cid: str):
     """
-    Stop and remove a container.
+    Stop and permanently remove a container and its DB entry.
+    Used by the cleanup worker.
     """
     try:
         container = client.containers.get(cid)
         container.remove(force=True)
-        print(f"[docker_manager] Removed {cid}")
+        print(f"[docker_manager] Permanently removed {cid}")
     except Exception:
         print(f"[docker_manager] Could not remove {cid} (maybe already gone)")
 
     delete_instance(cid)
 
+def stop(cid: str):
+    """
+    Stop a container instance and update its DB status.
+    """
+    try:
+        container = client.containers.get(cid)
+        container.stop()
+        print(f"[docker_manager] Stopped {cid}")
+        update_instance_status(cid, 'stopped')
+        return True
+    except docker.errors.NotFound:
+        # If the container is already removed from Docker, update DB and proceed.
+        delete_instance(cid)
+        raise RuntimeError(f"Container {cid} not found on host. Removed DB entry.")
+    except Exception as e:
+        print(f"[docker_manager] Error stopping {cid}: {e}")
+        raise RuntimeError(f"Error stopping container: {e}")
+
+def start(cid: str):
+    """
+    Start a container instance that was previously stopped.
+    """
+    try:
+        container = client.containers.get(cid)
+        container.start()
+        print(f"[docker_manager] Started {cid}")
+        update_instance_status(cid, 'running')
+        return True
+    except docker.errors.NotFound:
+        # If the container is gone, delete the DB record.
+        delete_instance(cid)
+        raise RuntimeError(f"Container {cid} not found on host. Removed DB entry.")
+    except Exception as e:
+        print(f"[docker_manager] Error starting {cid}: {e}")
+        raise RuntimeError(f"Error starting container: {e}")
+
+def restart(cid: str):
+    """
+    Restart a container instance.
+    """
+    try:
+        container = client.containers.get(cid)
+        container.restart()
+        print(f"[docker_manager] Restarted {cid}")
+        update_instance_status(cid, 'running')
+        return True
+    except docker.errors.NotFound:
+        delete_instance(cid)
+        raise RuntimeError(f"Container {cid} not found on host. Removed DB entry.")
+    except Exception as e:
+        print(f"[docker_manager] Error restarting {cid}: {e}")
+        raise RuntimeError(f"Error restarting container: {e}")
+
 
 # ---------------------- LIST / STATS ----------------------
-
+# (Rest of the file is unchanged)
 def list_containers():
     """
-    List all running containers with stats.
+    List all running and stopped containers with stats.
     """
     out = []
-    for c in client.containers.list():
+    # Use client.containers.list(all=True) to also get stopped containers for accurate status check
+    for c in client.containers.list(all=True):
         try:
             stats = c.stats(stream=False)
             out.append({
                 "id": c.short_id,
                 "name": c.name,
                 "image": c.image.tags[0] if c.image.tags else "<none>",
-                "status": c.status,
+                "status": c.status, # Docker status will show 'running', 'exited', 'created' etc.
                 "cpu": round(stats["cpu_stats"]["cpu_usage"]["total_usage"] / 1e7, 2),
                 "mem": round(stats["memory_stats"]["usage"] / (1024 * 1024), 2)
             })
         except Exception:
+            # Handle cases where container is gone or stats not available
+            out.append({
+                "id": c.short_id,
+                "name": c.name,
+                "image": c.image.tags[0] if c.image.tags else "<none>",
+                "status": c.status, 
+                "cpu": 0,
+                "mem": 0
+            })
             continue
 
     return out
 
 
 def system_stats():
+    # Helper to provide system statistics
     return {
-        "cpu": psutil.cpu_percent(),
-        "memory": psutil.virtual_memory().percent,
-        "total_memory": round(psutil.virtual_memory().total / (1024 ** 3), 1),
+        "cpu_percent": psutil.cpu_percent(),
+        "memory_percent": psutil.virtual_memory().percent,
+        "total_memory_gb": round(psutil.virtual_memory().total / (1024 ** 3), 1),
     }

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, HttpUrl, validator
+from pydantic import BaseModel, HttpUrl, validator, root_validator
 from typing import Optional
 from datetime import datetime
 
@@ -31,14 +31,20 @@ class SpawnReq(BaseModel):
             raise ValueError("TTL must be <= 86400 seconds (24h)")
         return v
 
-    @validator("image", always=True)
-    def validate_mode(cls, v, values):
-        sub = values.get("submission_id")
-        if not v and not sub:
-            raise ValueError("Either 'image' or 'submission_id' must be provided.")
-        if v and sub:
+    # FIX: Replaced problematic @validator('image', always=True) with a root validator (Pydantic v1) 
+    # to reliably check the presence of cross-field dependencies.
+    @root_validator(pre=True)
+    def validate_mode(cls, values):
+        # Check if keys are explicitly present and have a non-None value
+        has_image = 'image' in values and values['image'] is not None
+        has_submission = 'submission_id' in values and values['submission_id'] is not None
+        
+        if has_image and has_submission:
             raise ValueError("Provide only ONE: 'image' OR 'submission_id'.")
-        return v
+        if not has_image and not has_submission:
+            raise ValueError("Either 'image' or 'submission_id' must be provided.")
+        
+        return values
 
 
 class SpawnResp(BaseModel):

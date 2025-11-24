@@ -1,11 +1,12 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, validator
 from passlib.context import CryptContext
 import sqlite3
 import uuid
 
-from .db import DB_PATH
-from .auth import create_token
+# Import necessary dependencies for the new endpoint
+from .db import DB_PATH, list_approved_submissions
+from .auth import create_token, require_user
 
 router = APIRouter()
 
@@ -93,6 +94,14 @@ def login(req: LoginReq):
         "access_token": token,
         "token_type": "bearer"
     }
+
+# ---------------------- USER SUBMISSION LIST ----------------------
+
+# FIX: Ensure the path is correct within the router, which is mounted under '/user'
+@router.get("/approved_submissions")
+async def get_user_approved_submissions(user=Depends(require_user)):
+    """Lists approved submissions that can be spawned into an instance."""
+    return list_approved_submissions(user["user_id"])
 
 
 # ---------------------- DEFAULT ADMIN CREATION ----------------------
