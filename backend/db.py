@@ -1,6 +1,7 @@
 import sqlite3
 from pathlib import Path
 import os 
+import uuid 
 
 DB_PATH = Path(__file__).resolve().parent / "instadock.db"
 
@@ -47,8 +48,7 @@ def init_db():
             subdomain TEXT NOT NULL,
             port INTEGER,
             expires_at TEXT NOT NULL,
-            status TEXT NOT 
-        NULL DEFAULT 'running', 
+            status TEXT NOT NULL DEFAULT 'running', 
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (submission_id) REFERENCES submissions(id)
         )
@@ -83,10 +83,12 @@ def update_submission_status(sub_id, status):
              submission = get_submission(sub_id)
              submission_uuid = submission['id']
              
-             # FIX: Using the convention the user confirmed: instadock_<shortid>:latest
+             # FIX: Reconstruct the image name exactly as observed in the successful manual pull.
+             # The CI process is using the short ID (first 8 chars) as a suffix to the repository name.
              short_id = submission_uuid.split('-')[0]
              
-             # The full repository name is 'instadock_' + short_id. The tag is ':latest'.
+             # The full repository name is 'instadock_' + short_id
+             # The tag is implicitly ':latest'
              image_repo_name = f"instadock_{short_id}"
              image_tag = f"ghcr.io/{GHCR_USER}/{image_repo_name}:latest"
              
@@ -117,13 +119,6 @@ def list_approved_submissions(user_id):
             ORDER BY created_at DESC
         """, (user_id,)).fetchall()
         return [dict(r) for r in rows]
-
-# FIX 2: New DB helper for permanent submission deletion
-def delete_submission(sub_id):
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("DELETE FROM submissions WHERE id=?", (sub_id,))
-        conn.commit()
-
 
 # ---------------- INSTANCES ----------------
 
@@ -170,6 +165,26 @@ def list_all_instances():
         conn.row_factory = sqlite3.Row
         rows = conn.execute("SELECT * FROM instances ORDER BY created_at DESC").fetchall()
         return [dict(r) for r in rows]
+
+# ---------------- USER AUTH HELPERS ----------------
+
+def get_user_by_username(username: str):
+    """Retrieves user by username for login/registration checks."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+        return dict(row) if row else None
+        
+def create_user(username: str, password_hash: str, role: str = 'user'):
+    """Creates a new user record."""
+    user_id = str(uuid.uuid4())
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("""
+            INSERT INTO users (id, username, password_hash, role)
+            VALUES (?, ?, ?, ?)
+        """, (user_id, username, password_hash, role)) # FIX: Added username to the tuple to match the 4 binding variables
+        conn.commit()
+    return user_id
 
 
 # Initialize DB on import

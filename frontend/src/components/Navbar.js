@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { getToken, removeToken } from "@/lib/auth";
 import { useRouter } from "next/navigation";
+import Link from 'next/link';
 
 export default function Navbar() {
   const router = useRouter();
@@ -18,22 +19,26 @@ export default function Navbar() {
     // Avoid SSR/client mismatch: render placeholder while hydrating
     return (
       <nav className="bg-[#0f0f15] border-b border-[#6332ff]/30 px-6 py-3">
-        <h1 className="text-2xl font-bold text-gray-300">DockerVerse</h1>
+        <h1 className="text-2xl font-bold text-gray-300">InstaDock</h1>
       </nav>
     );
   }
 
   return (
     <nav className="fade-in bg-[#0f0f15] border-b border-[#6332ff]/30 px-6 py-3 flex justify-between items-center">
-      <h1 className="text-2xl font-bold bg-gradient-to-r from-[#b480ff] to-[#6332ff] bg-clip-text text-transparent">
-        DockerVerse
-      </h1>
+      <div className="flex items-center space-x-2">
+        {/* REVERTED: Use Whale Emoji */}
+        <div className="text-2xl text-[#3b82f6]">🐳</div> 
+        <h1 className="text-2xl font-bold bg-gradient-to-r from-[#b480ff] to-[#6332ff] bg-clip-text text-transparent">
+          InstaDock
+        </h1>
+      </div>
       <div className="space-x-4">
         {loggedIn && (
           <>
-            <a href="/dashboard" className="hover:text-[#b480ff]">Dashboard</a>
-            <a href="/upload" className="hover:text-[#b480ff]">Upload</a>
-            <a href="/admin" className="hover:text-[#b480ff]">Admin</a>
+            <Link href="/dashboard" className="hover:text-[#b480ff]">Dashboard</Link>
+            <Link href="/upload" className="hover:text-[#b480ff]">Upload</Link>
+            <Link href="/admin" className="hover:text-[#b480ff]">Admin</Link>
           </>
         )}
         <button

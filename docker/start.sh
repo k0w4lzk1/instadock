@@ -19,8 +19,8 @@ if [ -f "instadock.json" ]; then
     fi
     
     # Read the custom entrypoint command
-    CONFIG_ENTRYPOINT=$(jq -r '.entrypoint' instadock.json)
-    if [ "$CONFIG_ENTRYPOINT" != "null" ]; then
+    CONFIG_ENTRYPOINT=$(jq -r '.entrypoint // ""' instadock.json)
+    if [ "$CONFIG_ENTRYPOINT" != "" ]; then
         ENTRYPOINT_CMD="$CONFIG_ENTRYPOINT"
     fi
     
@@ -49,10 +49,17 @@ fi
 echo "🏁 Running application on http://0.0.0.0:$PORT"
 
 if [ -n "$ENTRYPOINT_CMD" ]; then
-    # Option 1: Execute the explicit entrypoint command provided by the user (e.g., "uvicorn src.main:app --host 0.0.0.0 --port 8080")
+    # Option 1: Execute the explicit entrypoint command provided by the user
     echo "   -> Executing custom command: $ENTRYPOINT_CMD"
-    # The 'exec' command replaces the shell process with the application process
-    exec $ENTRYPOINT_CMD 
+    
+    # CRITICAL FIX: If the command is a script (starts with ./), execute it with bash
+    # This bypasses permission issues (Exited 127) and ensures the script is found.
+    if [[ "$ENTRYPOINT_CMD" == ./* ]]; then
+        exec bash "$ENTRYPOINT_CMD"
+    else
+        exec $ENTRYPOINT_CMD
+    fi
+    
 elif [ -f "src/main.py" ]; then
     # Option 2: Default to standard uvicorn execution if no command is specified but src/main.py exists
     echo "   -> Executing standard Uvicorn entrypoint: src.main:app"

@@ -1,4 +1,4 @@
-import { getToken, removeToken } from "./auth"; // <-- FIX: Import removeToken
+import { getToken, removeToken } from "./auth"; // FIX: Import removeToken
 
 const API_BASE = "http://127.0.0.1:8000";
 
@@ -15,11 +15,10 @@ export async function apiFetch(endpoint, options = {}) {
   });
 
   if (!res.ok) {
-    // FIX: If the status is 401 (Unauthorized) or 403 (Forbidden), 
-    // we assume the token is invalid or expired and remove it.
+    // FIX 1: Auto-logout on token failure (401/403)
     if (res.status === 401 || res.status === 403) {
-      removeToken(); // Automatically remove the expired token
-      throw new Error(`Session expired. Please log in again.`);
+        removeToken();
+        throw new Error(`Session expired. Please log in again.`);
     }
 
     const err = await res.json().catch(() => ({}));
@@ -30,11 +29,7 @@ export async function apiFetch(endpoint, options = {}) {
 }
 
 export async function getSystemStats() {
-  return apiFetch("/system/stats");
-}
-
-export async function getContainersForAdmin() {
-  return apiFetch("/admin/containers");
+  return apiFetch("/system/stats"); 
 }
 
 export async function getUserInstances() {
@@ -43,6 +38,36 @@ export async function getUserInstances() {
 
 export async function getApprovedSubmissions() {
   return apiFetch("/user/approved_submissions");
+}
+
+// FIX 2: Admin API functions - EXPORTED
+export async function getAllApprovedSubmissionsAdmin() {
+    return apiFetch("/admin/submissions/approved");
+}
+
+export async function getAllInstancesAdmin() {
+    return apiFetch("/admin/instances/all");
+}
+
+export async function getAdminStats() {
+    return apiFetch("/admin/stats");
+}
+
+// FIX 5: Password Reset API functions - EXPORTED
+export async function requestPasswordReset(username) {
+    return apiFetch("/user/forgot_password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username }),
+    });
+}
+
+export async function submitNewPassword(token, new_password) {
+    return apiFetch(`/user/reset_password/${token}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ new_password }),
+    });
 }
 
 export async function spawnNewInstance(submission_id) {
@@ -102,4 +127,9 @@ export async function approveSubmission(id) {
 
 export async function rejectSubmission(id) {
   return apiFetch(`/admin/reject/${id}`, { method: "POST" });
+}
+
+// FIX: Export deleteSubmission for AdminPanel.js
+export async function deleteSubmission(id) {
+  return apiFetch(`/admin/submission/${id}`, { method: "DELETE" });
 }

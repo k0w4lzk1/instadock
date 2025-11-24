@@ -7,6 +7,13 @@ export default function ContainerCard({ cid, name, status, expiresAt, subdomain,
     status === "running" ? "text-green-400" :
     status === "stopped" ? "text-yellow-400" : 
     "text-red-400" 
+  
+  // Dynamic border color based on status
+  const borderColor = 
+    status === "running" ? "border-green-600/50" :
+    status === "stopped" ? "border-yellow-600/50" :
+    "border-red-600/50";
+
 
   const displayStatus = status.charAt(0).toUpperCase() + status.slice(1);
   
@@ -17,12 +24,11 @@ export default function ContainerCard({ cid, name, status, expiresAt, subdomain,
     // Gracefully handle invalid date format
   }
 
-  // FIX 4: Construct the full URL
   const instanceUrl = subdomain && subdomain !== "N/A" ? `http://${subdomain}` : "N/A";
   
   const isRunning = status === 'running';
   const isStopped = status === 'stopped';
-  const canViewLogs = status !== 'removed' && status !== 'deleted'; // Ensure logs can't be viewed if removed
+  const canViewLogs = status !== 'removed' && status !== 'deleted'; 
 
   async function handleAction(actionType) {
     let confirmationMessage;
@@ -42,7 +48,7 @@ export default function ContainerCard({ cid, name, status, expiresAt, subdomain,
       case 'stop': actionFn = stopInstance; break;
       case 'start': actionFn = startInstance; break;
       case 'restart': actionFn = restartInstance; break;
-      case 'delete': actionFn = deleteInstance; break; // New action
+      case 'delete': actionFn = deleteInstance; break; 
       default: return;
     }
 
@@ -56,27 +62,31 @@ export default function ContainerCard({ cid, name, status, expiresAt, subdomain,
 
 
   return (
-    <div className="bg-gray-800/70 backdrop-blur p-5 rounded-xl border border-gray-700 hover:border-indigo-500 transition group">
-      <div>
-        <h4 className="text-lg font-semibold text-indigo-300 group-hover:text-indigo-400 transition truncate">{name}</h4>
-        <p className={`text-sm mt-1 ${color}`}>Status: {displayStatus}</p>
-        <p className="text-xs text-gray-400 mt-1">ID: {cid}</p>
-        <p className="text-xs text-gray-400 mt-1">Expires at: {expiryDate}</p>
-        {/* FIX 4: Display URL */}
-        <p className="text-xs text-gray-400 mt-1 truncate">
+    <div className={`bg-gray-800/70 backdrop-blur p-5 rounded-xl border-t-4 ${borderColor} shadow-2xl hover:shadow-indigo-900/50 transition group space-y-3`}>
+      <div className="border-b border-gray-700 pb-3">
+        <h4 className="text-xl font-bold text-indigo-300 group-hover:text-indigo-400 transition truncate">{name}</h4>
+        <p className={`text-sm mt-1 font-semibold ${color}`}>Status: {displayStatus}</p>
+      </div>
+      
+      <div className="text-xs space-y-1">
+        <p className="text-gray-400">ID: <span className="text-gray-300">{cid}</span></p>
+        <p className="text-gray-400">Expires at: <span className="text-gray-300">{expiryDate}</span></p>
+        
+        {/* URL Link */}
+        <p className="text-gray-400 truncate">
             URL: {instanceUrl !== "N/A" ? (
-                <a href={instanceUrl} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">{instanceUrl}</a>
+                <a href={instanceUrl} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline font-medium">{instanceUrl}</a>
             ) : (
-                "N/A (Stopped or Invalid)"
+                <span className="text-gray-500">(N/A)</span>
             )}
         </p>
       </div>
       
-      {/* FR-5.0: View Logs Button */}
-      <div className="flex gap-2 mt-4">
+      {/* Action Buttons */}
+      <div className="flex gap-2 pt-2">
           <Link 
               href={`/log/${cid}`}
-              className={`flex-1 text-center px-3 py-1 rounded text-sm transition-colors ${
+              className={`flex-1 text-center px-3 py-2 rounded text-sm font-semibold transition-colors ${
                   canViewLogs 
                   ? "bg-[#a855f7] hover:bg-[#9333ea]"
                   : "bg-gray-500 cursor-not-allowed text-gray-300"
@@ -87,11 +97,11 @@ export default function ContainerCard({ cid, name, status, expiresAt, subdomain,
           </Link>
       </div>
 
-      <div className="flex gap-2 mt-2">
+      <div className="flex gap-2">
         
-        {/* FR-4.0: Restart Button */}
+        {/* Restart Button */}
         <button 
-          className={`flex-1 px-3 py-1 rounded text-sm transition-colors ${
+          className={`flex-1 px-3 py-2 rounded text-sm font-medium transition-colors ${
             isRunning 
             ? "bg-indigo-600 hover:bg-indigo-700" 
             : "bg-gray-500 cursor-not-allowed" 
@@ -102,9 +112,9 @@ export default function ContainerCard({ cid, name, status, expiresAt, subdomain,
           Restart
         </button>
         
-        {/* FR-4.0: Start Button */}
+        {/* Start Button */}
         <button 
-          className={`flex-1 px-3 py-1 rounded text-sm transition-colors ${
+          className={`flex-1 px-3 py-2 rounded text-sm font-medium transition-colors ${
             isStopped 
             ? "bg-green-600 hover:bg-green-700" 
             : "bg-gray-500 cursor-not-allowed"
@@ -115,9 +125,9 @@ export default function ContainerCard({ cid, name, status, expiresAt, subdomain,
           Start
         </button>
         
-        {/* FR-4.0: Stop Button */}
+        {/* Stop Button */}
         <button 
-          className={`flex-1 px-3 py-1 rounded text-sm transition-colors ${
+          className={`flex-1 px-3 py-2 rounded text-sm font-medium transition-colors ${
             isRunning 
             ? "bg-red-600 hover:bg-red-700" 
             : "bg-gray-500 cursor-not-allowed"
@@ -129,10 +139,10 @@ export default function ContainerCard({ cid, name, status, expiresAt, subdomain,
         </button>
       </div>
       
-      {/* FR-4.0: Delete Button (New) */}
-      <div className="mt-2">
+      {/* Delete Button */}
+      <div>
         <button
-          className="w-full px-3 py-1 rounded text-sm transition-colors bg-gray-700 hover:bg-gray-800 border border-red-500 text-red-400"
+          className="w-full px-3 py-2 rounded text-sm font-semibold transition-colors bg-gray-700 hover:bg-gray-800 border border-red-500 text-red-400"
           onClick={() => handleAction('delete')}
         >
           PERMANENTLY DELETE

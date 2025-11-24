@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { setToken } from "@/lib/auth";
+import Link from "next/link";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -9,15 +10,33 @@ export default function RegisterPage() {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+
+  // FIX 6: Client-side validation function
+  const validateInput = () => {
+    setError("");
+    if (username.length < 3 || password.length < 8) {
+        setError("Username must be >= 3 characters, Password must be >= 8 characters.");
+        return false;
+    }
+    // FIX 6: Check for weird characters (non-alphanumeric)
+    if (!/^[a-zA-Z0-9]+$/.test(username)) {
+        setError("Username must only contain letters and numbers.");
+        return false;
+    }
+    if (password !== confirm) {
+      setError("Passwords do not match.");
+      return false;
+    }
+    return true;
+  }
 
   async function handleRegister(e) {
     e.preventDefault();
-    setMessage("");
+    if (!validateInput()) return;
 
-    if (password !== confirm) {
-      setMessage("Passwords do not match.");
-      return;
-    }
+    setMessage("Registering...");
 
     try {
       const res = await fetch("http://127.0.0.1:8000/user/register", {
@@ -32,28 +51,34 @@ export default function RegisterPage() {
       }
 
       const data = await res.json();
-      if (data.access_token) {
-        setToken(data.access_token); // save JWT
+      // Assuming a token is returned for immediate login
+      if (data.token) { 
+        setToken(data.token); 
         router.push("/dashboard");
       } else {
         setMessage("Registered successfully. Please log in.");
         setTimeout(() => router.push("/login"), 1500);
       }
     } catch (err) {
-      setMessage(err.message);
+      setError(err.message);
+      setMessage("");
     }
   }
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-[#0a0a0f] text-gray-100">
       <div className="w-full max-w-md bg-[#161622]/80 border border-[#6332ff]/30 p-6 rounded-lg shadow-lg">
-        <h1 className="text-3xl font-bold mb-6 bg-gradient-to-r from-[#b480ff] to-[#6332ff] bg-clip-text text-transparent text-center">
-          Create Account
-        </h1>
+        <div className="flex flex-col items-center mb-6">
+          {/* REVERTED: Use Whale Emoji */}
+          <div className="text-4xl text-[#3b82f6] mb-2">🐳</div> 
+          <h1 className="text-3xl font-bold bg-gradient-to-r from-[#b480ff] to-[#6332ff] bg-clip-text text-transparent text-center">
+            Register for InstaDock
+          </h1>
+        </div>
         <form onSubmit={handleRegister} className="space-y-4">
           <input
             type="text"
-            placeholder="Username"
+            placeholder="Username (Alphanumeric)"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             required
@@ -61,7 +86,7 @@ export default function RegisterPage() {
           />
           <input
             type="password"
-            placeholder="Password"
+            placeholder="Password (Min 8 characters)"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
@@ -83,12 +108,13 @@ export default function RegisterPage() {
           </button>
         </form>
         {message && <p className="text-sm text-center mt-3 text-[#b480ff]">{message}</p>}
+        {error && <p className="text-sm text-center mt-3 text-red-400">{error}</p>}
 
         <p className="mt-4 text-sm text-gray-400 text-center">
           Already have an account?{" "}
-          <a href="/login" className="text-[#b480ff] hover:underline">
+          <Link href="/login" className="text-[#b480ff] hover:underline">
             Login
-          </a>
+          </Link>
         </p>
       </div>
     </div>

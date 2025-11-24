@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { setToken } from "@/lib/auth";
+import Link from 'next/link'; // Import Link
 
 export default function Login() {
   const router = useRouter();
@@ -15,10 +16,6 @@ export default function Login() {
     setLoading(true);
     setError("");
 
-    // const formData = new URLSearchParams();
-    // formData.append("username", username);
-    // formData.append("password", password);
-
       const res = await fetch("http://127.0.0.1:8000/user/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -29,7 +26,8 @@ export default function Login() {
 
     if (res.ok) {
       const data = await res.json();
-      setToken(data.access_token);
+      // FIX 1: Change data.access_token to data.token to match backend response
+      setToken(data.token); 
       router.push("/dashboard");
     } else {
       setError("Invalid username or password");
@@ -39,11 +37,13 @@ export default function Login() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#0a0a0a] via-[#1e1e1e] to-[#6b21a8] text-gray-100 font-[JetBrains_Mono]">
       <div className="p-8 rounded-xl max-w-md w-full backdrop-blur-md bg-[#1e1e1e]/70 border border-[#a855f7]/30">
-        <div className="flex justify-center items-center mb-6">
-          <div className="animate-spin-slow border-2 border-[#a855f7] w-10 h-10 rounded-lg mr-3"></div>
+        <div className="flex flex-col items-center mb-6">
+          {/* REVERTED: Use Whale Emoji */}
+          <div className="text-4xl text-[#3b82f6] mb-2">🐳</div> 
           <h1 className="text-3xl font-bold bg-gradient-to-r from-[#a855f7] to-[#9333ea] bg-clip-text text-transparent">
-            DockerVerse
+            InstaDock
           </h1>
+          <p className="text-sm text-gray-400 mt-1">Container Orchestration Service</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
@@ -82,13 +82,19 @@ export default function Login() {
           >
             {loading ? "Signing in..." : "Sign In"}
           </button>
+          
+          {/* Forgot Password Link */}
+          <p className="text-center text-xs pt-1">
+            <Link href="/forgot_password" className="text-gray-400 hover:text-[#b480ff] hover:underline">Forgot Password?</Link>
+          </p>
+
         </form>
 
         <p className="mt-5 text-sm text-gray-400 text-center">
           Need an account?{" "}
-          <a href="/register" className="text-[#a855f7] hover:underline">
+          <Link href="/register" className="text-[#a855f7] hover:underline">
             Register
-          </a>
+          </Link>
         </p>
       </div>
     </div>

@@ -5,6 +5,7 @@ import os
 import zipfile
 from pathlib import Path
 import json
+import time # ADDED: For git config setup in _git helper
 
 from .db import (
     record_submission,
@@ -22,6 +23,10 @@ WORKDIR.mkdir(parents=True, exist_ok=True)
 # Main monorepo where /submissions/ gets updated
 MAIN_REPO_URL = os.getenv("MAIN_REPO_URL", "https://github.com/k0w4lzk1/instaDock.git")
 
+# FIX: Define default Git identity for automated commits
+GIT_USER_NAME = os.getenv("GIT_USER_NAME", "InstaDock Automated Bot")
+GIT_USER_EMAIL = os.getenv("GIT_USER_EMAIL", "instadock@example.com")
+
 
 # -------------------------------------------------------------------
 # SHELL HELPERS
@@ -32,6 +37,17 @@ def _git(*args, cwd=None):
     Run a git command and throw errors cleanly.
     """
     print(f"[GIT] {' '.join(args)}")
+    
+    # CRITICAL FIX: Ensure author identity is set before any operation that writes history
+    try:
+        # Check if user.name is set locally in the repository (cwd)
+        subprocess.run(["git", "config", "user.name"], cwd=cwd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    except subprocess.CalledProcessError:
+        # If user.name is not set, set both name and email for the repository
+        print(f"[GIT] Setting identity to {GIT_USER_NAME} <{GIT_USER_EMAIL}>")
+        subprocess.run(["git", "config", "user.name", GIT_USER_NAME], cwd=cwd, check=True)
+        subprocess.run(["git", "config", "user.email", GIT_USER_EMAIL], cwd=cwd, check=True)
+
     result = subprocess.run(
         ["git", *args],
         cwd=cwd,
@@ -161,6 +177,16 @@ def create_branch_from_zip(user_id: str, file):
             z.extractall(zip_extract_dir)
 
         validate_zip_safe(zip_extract_dir)
+        
+        # --- FIX: Determine the actual source directory (Handles zipping the parent folder) ---
+        extracted_items = list(p for p in zip_extract_dir.iterdir() if not p.name.startswith('.'))
+        source_dir = zip_extract_dir
+        
+        if len(extracted_items) == 1 and extracted_items[0].is_dir():
+            print(f"[ZIP] Found single root directory: {extracted_items[0].name}. Using its contents.")
+            source_dir = extracted_items[0]
+        # --- END FIX ---
+
 
         # Clone monorepo
         _git("clone", "--depth", "1", MAIN_REPO_URL, str(mono_clone))
@@ -169,10 +195,16 @@ def create_branch_from_zip(user_id: str, file):
         target = mono_clone / "submissions" / user_id / sub_id
         target.mkdir(parents=True, exist_ok=True)
 
+        # Ensure manifest is created in the target directory before copying files, 
+        # so user's own instadock.json isn't overwritten if it exists.
         ensure_manifest(target)
 
-        # Copy zip contents
-        for item in zip_extract_dir.iterdir():
+        # Copy actual source files (from source_dir) into the target directory
+        for item in source_dir.iterdir():
+            # Skip hidden files like .DS_Store
+            if item.name.startswith('.'):
+                continue
+            
             dest = target / item.name
             if item.is_dir():
                 shutil.copytree(item, dest, dirs_exist_ok=True)
@@ -201,7 +233,7 @@ def approve_submission(sub_id: str):
     """
     Approve submission:
     - Adds APPROVED file to branch
-    - GitHub Actions workflow does the build
+    - GitHub Actions workflow will build & push to GHCR.
     - Backend uses deterministic GHCR tag; no callback needed
     """
     sub = get_submission(sub_id)
@@ -230,7 +262,7 @@ def approve_submission(sub_id: str):
 
 
 # -------------------------------------------------------------------
-# REJECT SUBMISSION
+# REJECT SUBMISSION (FIXED ERROR HANDLING)
 # -------------------------------------------------------------------
 
 def reject_submission(sub_id: str):
@@ -254,14 +286,19 @@ def reject_submission(sub_id: str):
         )
 
         if exists.stdout.strip():
-            _git("push", "origin", "--delete", branch, cwd=reject_clone)
-
+            # CRITICAL FIX: Wrap push delete in try/except to avoid crashing the worker
+            # if the branch was already deleted manually or by another worker.
+            try:
+                _git("push", "origin", "--delete", branch, cwd=reject_clone)
+            except RuntimeError as e:
+                # If push fails, log it but continue to update DB status
+                print(f"[GIT] Warning: Failed to delete remote branch {branch}: {e}")
+                
         update_submission_status(sub_id, "rejected")
 
     finally:
         shutil.rmtree(reject_clone, ignore_errors=True)
 
-# FIX 2: New endpoint for permanent deletion of a submission
 # -------------------------------------------------------------------
 # PERMANENTLY DELETE SUBMISSION (New - Calls reject logic + removes DB entry)
 # -------------------------------------------------------------------

@@ -12,7 +12,7 @@ from .db import save_instance, delete_instance, get_instance, update_instance_st
 
 # ---------------------- CONFIG ----------------------
 
-# FIX 1: Set BASE_DOMAIN by checking PROXY_HOST first (essential for Traefik fix, but defaults to localhost here)
+# FIX: Force BASE_DOMAIN to 'localhost' for direct port access in host mode
 BASE_DOMAIN = os.getenv("PROXY_HOST", os.getenv("BASE_DOMAIN", "localhost"))
 GHCR_USER = os.getenv("GHCR_USERNAME", "k0w4lzk1")
 # SECURITY FIX: Token MUST be loaded from environment and NOT hardcoded.
@@ -67,9 +67,8 @@ def docker_pull(image: str):
 
 def generate_subdomain(cid: str):
     """
-    Generate subdomain like: <cid>.instadock.test or <cid>.localhost
+    Generate subdomain like: <cid>.localhost
     """
-    # Use the first 8 characters of the container ID for a shorter subdomain part
     return f"{cid}.{BASE_DOMAIN}"
 
 
@@ -90,7 +89,7 @@ def spawn(image: str, user_id: str, submission_id: str = None, ttl_seconds: int 
     docker_pull(image)
 
     # 2. Allocate fallback port (Traefik ignored)
-    # The default FastAPI port is 8000, which we will map to a random host port.
+    # The application port is 8080, which we map to a random host port.
     host_port = random.randint(20000, 40000)
 
     # 3. Generate a stable container name/subdomain from the start.
@@ -102,15 +101,15 @@ def spawn(image: str, user_id: str, submission_id: str = None, ttl_seconds: int 
     labels = {
         "traefik.enable": "true",
         "traefik.http.routers.instadock.rule": f"Host(`{short_uuid_id}.{BASE_DOMAIN}`)", 
-        "traefik.http.services.instadock.loadbalancer.server.port": "8000",
+        "traefik.http.services.instadock.loadbalancer.server.port": "8080", # FIX: Traefik target port is 8080
     }
 
     # 5. Run container
-    # Since we are running the backend on the host, we use the default 'bridge' network.
+    # CRITICAL FIX: Map container port 8080 (the actual listening port) to the random host port.
     container = client.containers.run(
         image,
         detach=True,
-        ports={"8000/tcp": host_port}, # Container port 8000 mapped to random host port
+        ports={"8080/tcp": host_port}, # Mapped 8080 to host port
         labels=labels,
         name=container_name, 
         cap_drop=["ALL"],

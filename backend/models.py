@@ -1,6 +1,29 @@
 from pydantic import BaseModel, HttpUrl, validator, root_validator
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
+
+
+# ---------------------- AUTH MODELS ----------------------
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+class UserRegister(BaseModel):
+    username: str
+    password: str
+
+class RequestPasswordReset(BaseModel):
+    username: str
+
+class ResetPassword(BaseModel):
+    new_password: str
+    
+    @validator("new_password")
+    def validate_password_length(cls, v):
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters long.")
+        return v
 
 
 # ---------------------- SUBMISSION API MODELS ----------------------
@@ -21,7 +44,7 @@ class SubmitZipResp(BaseModel):
 class SpawnReq(BaseModel):
     image: Optional[str] = None
     submission_id: Optional[str] = None
-    ttl_seconds: int = 600
+    ttl_seconds: int = 3600
 
     @validator("ttl_seconds")
     def validate_ttl(cls, v):
@@ -31,11 +54,8 @@ class SpawnReq(BaseModel):
             raise ValueError("TTL must be <= 86400 seconds (24h)")
         return v
 
-    # FIX: Replaced problematic @validator('image', always=True) with a root validator (Pydantic v1) 
-    # to reliably check the presence of cross-field dependencies.
     @root_validator(pre=True)
     def validate_mode(cls, values):
-        # Check if keys are explicitly present and have a non-None value
         has_image = 'image' in values and values['image'] is not None
         has_submission = 'submission_id' in values and values['submission_id'] is not None
         
