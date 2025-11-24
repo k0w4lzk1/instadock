@@ -1,0 +1,7 @@
+{
+  "dockerfile": "Dockerfile",
+  "context": ".",
+  "ports": [
+    8080
+  ]
+}
