@@ -1,4 +1,4 @@
-import { getToken } from "./auth";
+import { getToken, removeToken } from "./auth"; // <-- FIX: Import removeToken
 
 const API_BASE = "http://127.0.0.1:8000";
 
@@ -15,6 +15,13 @@ export async function apiFetch(endpoint, options = {}) {
   });
 
   if (!res.ok) {
+    // FIX: If the status is 401 (Unauthorized) or 403 (Forbidden), 
+    // we assume the token is invalid or expired and remove it.
+    if (res.status === 401 || res.status === 403) {
+      removeToken(); // Automatically remove the expired token
+      throw new Error(`Session expired. Please log in again.`);
+    }
+
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `Request failed: ${res.status}`);
   }
@@ -95,9 +102,4 @@ export async function approveSubmission(id) {
 
 export async function rejectSubmission(id) {
   return apiFetch(`/admin/reject/${id}`, { method: "POST" });
-}
-
-// FIX 2: New API wrapper for admin permanent submission deletion
-export async function deleteSubmission(id) {
-  return apiFetch(`/admin/submission/${id}`, { method: "DELETE" });
 }

@@ -12,13 +12,14 @@ from .db import save_instance, delete_instance, get_instance, update_instance_st
 
 # ---------------------- CONFIG ----------------------
 
-# FIX 1: Set BASE_DOMAIN by checking PROXY_HOST first (essential for Traefik fix)
+# FIX 1: Set BASE_DOMAIN by checking PROXY_HOST first (essential for Traefik fix, but defaults to localhost here)
 BASE_DOMAIN = os.getenv("PROXY_HOST", os.getenv("BASE_DOMAIN", "localhost"))
 GHCR_USER = os.getenv("GHCR_USERNAME", "k0w4lzk1")
 # SECURITY FIX: Token MUST be loaded from environment and NOT hardcoded.
-GHCR_PULL_TOKEN = os.getenv("GHCR_PULL_TOKEN","") 
+GHCR_PULL_TOKEN = os.getenv("GHCR_PULL_TOKEN") 
 GHCR_REGISTRY = f"ghcr.io/{GHCR_USER}"
 
+# Ensure we can connect to the Docker daemon (you need Docker running on your host)
 client = docker.from_env()
 
 # ---------------------- HELPERS ----------------------
@@ -76,7 +77,7 @@ def generate_subdomain(cid: str):
 
 def spawn(image: str, user_id: str, submission_id: str = None, ttl_seconds: int = 600):
     """
-    Spawns a Docker container and correctly sets Traefik labels.
+    Spawns a Docker container using a direct host port map for local testing.
     """
     
     # FIX: Add a short delay to allow the CI/CD pipeline (GitHub Actions) 
@@ -88,36 +89,34 @@ def spawn(image: str, user_id: str, submission_id: str = None, ttl_seconds: int 
     # 1. Pull image
     docker_pull(image)
 
-    # 2. Allocate fallback port (Traefik not required, but supported)
+    # 2. Allocate fallback port (Traefik ignored)
+    # The default FastAPI port is 8000, which we will map to a random host port.
     host_port = random.randint(20000, 40000)
 
     # 3. Generate a stable container name/subdomain from the start.
     container_uuid = str(uuid.uuid4())
     container_name = f"instadock-{container_uuid}"
     
-    # Use container_uuid short ID for stability and DNS/Traefik rule
+    # 4. Traefik labels (included for compliance, but ignored when running this way)
     short_uuid_id = container_uuid[:8] 
-    initial_subdomain = generate_subdomain(short_uuid_id) 
-
-    # 4. Traefik labels (optional) - Set the final Traefik rule on RUN
     labels = {
         "traefik.enable": "true",
         "traefik.http.routers.instadock.rule": f"Host(`{short_uuid_id}.{BASE_DOMAIN}`)", 
-        # The internal app runs on 8000 (from start.sh default)
         "traefik.http.services.instadock.loadbalancer.server.port": "8000",
     }
 
     # 5. Run container
+    # Since we are running the backend on the host, we use the default 'bridge' network.
     container = client.containers.run(
         image,
         detach=True,
-        ports={"8000/tcp": host_port}, # Container port 8000 mapped to host port
+        ports={"8000/tcp": host_port}, # Container port 8000 mapped to random host port
         labels=labels,
-        name=container_name, # Set a stable name
+        name=container_name, 
         cap_drop=["ALL"],
         mem_limit="512m",
         nano_cpus=1_000_000_000,  # 1 CPU
-        network="instadock-proxy", # FIX: Spawn container onto the shared Traefik network
+        network="bridge", # Default network since instadock-proxy won't exist
     )
 
     # 6. Get real CID (short ID)
@@ -128,13 +127,9 @@ def spawn(image: str, user_id: str, submission_id: str = None, ttl_seconds: int 
                datetime.timedelta(seconds=ttl_seconds)).isoformat()
 
     # 8. Determine the correct subdomain string to save in the DB
-    subdomain_to_save = initial_subdomain 
-    url_to_display = f"http://{initial_subdomain}"
-    
-    if BASE_DOMAIN == "localhost":
-        # If PROXY_HOST is not set, use the direct port access URL
-        subdomain_to_save = f"{BASE_DOMAIN}:{host_port}"
-        url_to_display = f"http://{subdomain_to_save}" 
+    # We force the simple localhost:<port> structure to the DB
+    subdomain_to_save = f"localhost:{host_port}" 
+    url_to_display = f"http://{subdomain_to_save}" 
 
     # 9. Save instance in DB 
     save_instance(

@@ -7,3 +7,4 @@ python-jose
 pyjwt
 psutil
 python-multipart
+argon2_cffi
