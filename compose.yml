@@ -2,52 +2,51 @@ version: '3.8'
 
 services:
   # ------------------------------------
-  # 1. Traefik Service (The Reverse Proxy)
+  # 1. Traefik Service
   # ------------------------------------
   traefik:
     image: traefik:v2.10
     container_name: traefik
     command:
-      # Enable Docker provider and expose to public ports
       - --api.insecure=true
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
-      - --entrypoints.web.address=:80 # Traefik listens on port 80 for HTTP requests
+      - --entrypoints.web.address=:80 
     ports:
-      - "80:80"  # Map host port 80 to container port 80
-      - "8080:8080" # Dashboard (optional, for debugging)
+      - "80:80"
+      - "8080:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
-      - instadock-proxy # Traefik must be on this network
+      - instadock-proxy
 
   # ------------------------------------
-  # 2. Backend Service (The FastAPI App)
+  # 2. Backend Service
   # ------------------------------------
   backend:
     build:
       context: .
-      dockerfile: docker/backend.Dockerfile # Assuming you have a backend Dockerfile
+      dockerfile: docker/backend.Dockerfile 
     environment:
-      - PROXY_HOST=instadock.test # Essential for subdomain generation
+      - PROXY_HOST=instadock.test 
       - GHCR_USERNAME=k0w4lzk1 
-      # ... other variables
+      # ... other environment variables
     ports:
-      - "8000:8000" # Optional, but good for direct API access
+      - "8000:8000"
     networks:
-      - instadock-proxy # Backend must also be on this network
+      - instadock-proxy 
 
   # ------------------------------------
-  # 3. Frontend Service (The Next.js App)
+  # 3. Frontend Service (COMPLETED FIX)
   # ------------------------------------
   frontend:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: ./frontend  # Tells Docker Compose where the code lives
+      dockerfile: Dockerfile # Assumes the Dockerfile is named 'Dockerfile' in the frontend folder
     ports:
       - "3000:3000"
     networks:
-      - instadock-proxy # Frontend must also be on this network
+      - instadock-proxy 
 
 
 # ------------------------------------
@@ -55,5 +54,4 @@ services:
 # ------------------------------------
 networks:
   instadock-proxy:
-    # Create an external bridge network for Traefik and all services
     external: false
