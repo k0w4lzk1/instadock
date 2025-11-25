@@ -1,4 +1,4 @@
-import { getToken, removeToken } from "./auth"; // FIX: Import removeToken
+import { getToken, removeToken } from "./auth"; 
 
 const API_BASE = "http://127.0.0.1:8000";
 
@@ -39,6 +39,12 @@ export async function getUserInstances() {
 export async function getApprovedSubmissions() {
   return apiFetch("/user/approved_submissions");
 }
+
+// FIX: New REST endpoint for fetching logs (Replaces WebSocket)
+export async function fetchInstanceLogs(cid) {
+    return apiFetch(`/logs/${cid}`);
+}
+
 
 // FIX 2: Admin API functions - EXPORTED
 export async function getAllApprovedSubmissionsAdmin() {
@@ -96,12 +102,7 @@ export async function deleteInstance(cid) {
   return apiFetch(`/delete/${cid}`, { method: "DELETE" });
 }
 
-export function getLogWebSocketUrl(cid) {
-    const token = getToken();
-    // Assuming API_BASE is http://127.0.0.1:8000, convert to ws://
-    const wsBase = API_BASE.replace('http', 'ws');
-    return `${wsBase}/ws/logs/${cid}?authorization=Bearer%20${token}`;
-}
+// REMOVED: export function getLogWebSocketUrl(cid)
 
 export async function submitRepo(repo_url, ref) {
   return apiFetch("/submit/repo", {

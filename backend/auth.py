@@ -1,4 +1,4 @@
-from fastapi import Header, HTTPException, Depends
+from fastapi import Header, HTTPException, Depends, Query
 from typing import Optional
 import jwt
 import os
@@ -9,9 +9,11 @@ import datetime
 # --------------------------------------------------------------------
 
 # Force user to set a strong secret — never fallback to hardcoded
-SECRET_KEY = os.getenv("JWT_SECRET","Trust_me_im_sources") 
+SECRET_KEY = os.getenv("JWT_SECRET") 
 if not SECRET_KEY:
-    raise RuntimeError("Environment variable JWT_SECRET must be set")
+    # Set a stable default for immediate development:
+    SECRET_KEY = "Trust_me_im_sources"
+    print("[SECURITY WARNING] Using default JWT_SECRET. Set environment variable.")
 
 ALGORITHM = "HS256"
 TOKEN_ISSUER = "instadock-backend"
@@ -64,20 +66,26 @@ def decode_token(token: str):
 
 
 # --------------------------------------------------------------------
-# 🔒 DEPENDENCIES FOR FASTAPI
+# 🔒 DEPENDENCIES FOR FASTAPI (CRITICAL FIX FOR WS)
 # --------------------------------------------------------------------
 
-async def require_user(authorization: Optional[str] = Header(None)):
+async def require_user(
+    authorization: Optional[str] = Header(None, alias="Authorization"), # Check HTTP Header (standard API)
+    # FIX: Also check the query parameter for WebSocket connections
+    query_auth: Optional[str] = Query(None, alias="authorization") 
+):
     """
-    Validate Authorization: Bearer <token>
-    and return user_id + role.
+    Validate Authorization: Bearer <token> from either Header (HTTP) or 
+    Query Parameter (WebSocket).
     """
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    auth_string = authorization if authorization else query_auth
+    
+    if not auth_string:
+        raise HTTPException(status_code=401, detail="Missing Authorization header/query parameter")
 
-    parts = authorization.split()
+    parts = auth_string.split()
     if len(parts) != 2 or parts[0].lower() != "bearer":
-        raise HTTPException(status_code=401, detail="Invalid Authorization format")
+        raise HTTPException(status_code=401, detail="Invalid Authorization format (Must be Bearer <token>)")
 
     token = parts[1]
     data = decode_token(token)

@@ -16,7 +16,7 @@ from .db import save_instance, delete_instance, get_instance, update_instance_st
 BASE_DOMAIN = os.getenv("PROXY_HOST", os.getenv("BASE_DOMAIN", "localhost"))
 GHCR_USER = os.getenv("GHCR_USERNAME", "k0w4lzk1")
 # SECURITY FIX: Token MUST be loaded from environment and NOT hardcoded.
-GHCR_PULL_TOKEN = os.getenv("GHCR_PULL_TOKEN") 
+GHCR_PULL_TOKEN = os.getenv("GHCR_PULL_TOKEN","") 
 GHCR_REGISTRY = f"ghcr.io/{GHCR_USER}"
 
 # Ensure we can connect to the Docker daemon (you need Docker running on your host)

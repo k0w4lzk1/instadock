@@ -5,7 +5,7 @@ import os
 import zipfile
 from pathlib import Path
 import json
-import time # ADDED: For git config setup in _git helper
+import time 
 
 from .db import (
     record_submission,
@@ -233,7 +233,7 @@ def approve_submission(sub_id: str):
     """
     Approve submission:
     - Adds APPROVED file to branch
-    - GitHub Actions workflow will build & push to GHCR.
+    - GitHub Actions workflow does the build
     - Backend uses deterministic GHCR tag; no callback needed
     """
     sub = get_submission(sub_id)
@@ -317,6 +317,7 @@ def delete_submission(sub_id: str):
 
     # Delete the record from the database
     from .db import delete_submission as db_delete_submission
+    # Ensure db.py has delete_submission function
     db_delete_submission(sub_id)
 
     return True

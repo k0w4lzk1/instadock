@@ -35,15 +35,15 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#0a0a0a] via-[#1e1e1e] to-[#6b21a8] text-gray-100 font-[JetBrains_Mono]">
-      <div className="p-8 rounded-xl max-w-md w-full backdrop-blur-md bg-[#1e1e1e]/70 border border-[#a855f7]/30">
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gradient-to-br dark:from-[#0a0a0a] dark:via-[#1e1e1e] dark:to-[#6b21a8] text-gray-800 dark:text-gray-100 transition-colors duration-300 font-[JetBrains_Mono]">
+      <div className="p-8 rounded-xl max-w-md w-full backdrop-blur-md bg-white/90 dark:bg-[#1e1e1e]/90 border border-indigo-400/30 dark:border-[#a855f7]/30 shadow-lg">
         <div className="flex flex-col items-center mb-6">
-          {/* REVERTED: Use Whale Emoji */}
+          {/* Integrated Logo */}
           <div className="text-4xl text-[#3b82f6] mb-2">🐳</div> 
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-[#a855f7] to-[#9333ea] bg-clip-text text-transparent">
+          <h1 className="text-3xl font-bold text-indigo-600 dark:text-transparent dark:bg-clip-text dark:bg-gradient-to-r dark:from-[#a855f7] dark:to-[#9333ea]">
             InstaDock
           </h1>
-          <p className="text-sm text-gray-400 mt-1">Container Orchestration Service</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Container Orchestration Service</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
@@ -54,7 +54,7 @@ export default function Login() {
               required
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full px-4 py-2 bg-[#2d2d2d] border border-[#3d3d3d] rounded-md focus:outline-none focus:ring-2 focus:ring-[#a855f7]"
+              className="w-full px-4 py-2 bg-gray-100 dark:bg-[#2d2d2d] border border-gray-300 dark:border-[#3d3d3d] rounded-md focus:outline-none focus:ring-2 focus:ring-[#a855f7] text-gray-800 dark:text-gray-100"
             />
           </div>
 
@@ -65,34 +65,34 @@ export default function Login() {
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-2 bg-[#2d2d2d] border border-[#3d3d3d] rounded-md focus:outline-none focus:ring-2 focus:ring-[#a855f7]"
+              className="w-full px-4 py-2 bg-gray-100 dark:bg-[#2d2d2d] border border-gray-300 dark:border-[#3d3d3d] rounded-md focus:outline-none focus:ring-2 focus:ring-[#a855f7] text-gray-800 dark:text-gray-100"
             />
           </div>
 
-          {error && <p className="text-red-400 text-sm">{error}</p>}
+          {error && <p className="text-red-600 dark:text-red-400 text-sm">{error}</p>}
 
           <button
             type="submit"
             disabled={loading}
             className={`w-full py-2 rounded-md font-medium transition-colors ${
               loading
-                ? "bg-[#7e22ce] cursor-not-allowed"
-                : "bg-[#a855f7] hover:bg-[#9333ea]"
+                ? "bg-[#7e22ce] cursor-not-allowed text-white"
+                : "bg-[#a855f7] hover:bg-[#9333ea] text-white"
             }`}
           >
             {loading ? "Signing in..." : "Sign In"}
           </button>
           
-          {/* Forgot Password Link */}
+          {/* FIX 5: Forgot Password Link */}
           <p className="text-center text-xs pt-1">
-            <Link href="/forgot_password" className="text-gray-400 hover:text-[#b480ff] hover:underline">Forgot Password?</Link>
+            <Link href="/forgot_password" className="text-gray-500 hover:text-[#b480ff] hover:underline">Forgot Password?</Link>
           </p>
 
         </form>
 
-        <p className="mt-5 text-sm text-gray-400 text-center">
+        <p className="mt-5 text-sm text-gray-500 dark:text-gray-400 text-center">
           Need an account?{" "}
-          <Link href="/register" className="text-[#a855f7] hover:underline">
+          <Link href="/register" className="text-indigo-600 dark:text-[#a855f7] hover:underline">
             Register
           </Link>
         </p>

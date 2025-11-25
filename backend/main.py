@@ -48,6 +48,32 @@ from backend.db import (
     update_instance_status,
 )
 
+# --- FIX: Connection Manager for Chat ---
+class ConnectionManager:
+    """Manages active WebSocket connections (e.g., for Admin Chat)."""
+    def __init__(self):
+        # Store connections by user_id to facilitate direct messaging (admin to user)
+        self.active_connections: dict[str, WebSocket] = {}
+
+    async def connect(self, user_id: str, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections[user_id] = websocket
+
+    def disconnect(self, user_id: str):
+        if user_id in self.active_connections:
+            del self.active_connections[user_id]
+
+    async def send_personal_message(self, message: str, user_id: str):
+        if user_id in self.active_connections:
+            await self.active_connections[user_id].send_text(message)
+
+    async def broadcast(self, message: str):
+        for connection in self.active_connections.values():
+            await connection.send_text(message)
+
+manager = ConnectionManager()
+# ----------------------------------------
+
 # FIX 4: Add dependencies to all API tools
 app = FastAPI(title="InstaDock API (Patched)")
 
@@ -120,7 +146,7 @@ async def reject(sub_id: str):
         
 @app.delete("/admin/submission/{sub_id}", dependencies=[Depends(require_admin)])
 async def admin_delete_submission(sub_id: str):
-    """FIX 2: Admin permanently deletes a submission record and associated git branch."""
+    """Admin permanently deletes a submission record and associated git branch."""
     try:
         delete_submission(sub_id) 
         return {"status": "permanently deleted", "sub_id": sub_id}
@@ -132,7 +158,7 @@ async def admin_delete_submission(sub_id: str):
 
 @app.get("/admin/submissions", dependencies=[Depends(require_admin)])
 def get_pending():
-    """FIX 2: List pending submissions."""
+    """List pending submissions."""
     return list_pending_submissions()
 
 
@@ -274,12 +300,96 @@ async def instance_details(cid: str, user=Depends(require_user)):
 
 
 # ---------------------------------------------------------
+# 🟩 LOGS (REPLACED WITH HTTP POLLING)
+# ---------------------------------------------------------
+
+@app.get("/logs/{cid}", dependencies=[Depends(require_user)])
+def get_container_logs(cid: str, user=Depends(require_user)):
+    """
+    FIX: HTTP GET endpoint to fetch the last 500 lines of logs for polling.
+    """
+    # Use the same ownership check logic
+    instance = check_instance_ownership(cid, user)
+
+    try:
+        container = docker_client.containers.get(cid)
+        # Fetch up to the last 500 lines of logs
+        raw_logs = container.logs(tail=500, timestamps=True).decode('utf-8')
+        
+        return {
+            "status": "success",
+            "cid": cid,
+            "logs": raw_logs.strip().split('\n')
+        }
+    except docker.errors.NotFound:
+        # If the container is gone from Docker, update DB and report
+        update_instance_status(cid, 'removed')
+        raise HTTPException(
+            status_code=404,
+            detail=f"Container {cid} not found on Docker host. Removed DB entry."
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching logs: {e}")
+
+
+# ---------------------------------------------------------
+# 🟩 ADMIN CHAT/PINGS (NEW FEATURE)
+# ---------------------------------------------------------
+
+@app.websocket("/ws/admin/chat")
+async def websocket_admin_chat(websocket: WebSocket, user_data: dict = Depends(require_user)):
+    """
+    FIX: Bidirectional chat and ping channel for admin/support communication.
+    """
+    user_id = user_data["user_id"]
+    is_admin = user_data["role"] == "admin"
+    
+    # 1. Connect and register
+    await manager.connect(user_id, websocket)
+    
+    # If standard user connects, send welcome/support message.
+    if not is_admin:
+        await manager.send_personal_message(f"Welcome, {user_id[:8]}! Your support session is active.", user_id)
+    else:
+        await manager.send_personal_message(f"Admin session active. Total users online: {len(manager.active_connections)}.", user_id)
+
+
+    try:
+        while True:
+            # 2. Receive messages from client
+            data = await websocket.receive_text()
+            
+            # Simple ping/pong mechanism to keep connection alive
+            if data.lower() == "ping":
+                await manager.send_personal_message("pong", user_id)
+                continue
+            
+            # 3. Message handling (simplified chat)
+            message_prefix = "[SUPPORT]" if is_admin else f"[USER {user_id[:8]}]"
+            full_message = f"{message_prefix}: {data}"
+            
+            # Admins get to broadcast or message other users (logic omitted for simplicity)
+            # Standard users send messages to be seen by admins.
+            
+            # For this MVP, we'll assume all messages are broadcast to all connected clients
+            # (Admins/Users) to simulate a support room, and they filter the UI side.
+            await manager.broadcast(full_message)
+
+    except WebSocketDisconnect:
+        manager.disconnect(user_id)
+        await manager.broadcast(f"User {user_id[:8]} left the chat.")
+    except Exception as e:
+        print(f"Chat error for {user_id}: {e}")
+        manager.disconnect(user_id)
+
+
+# ---------------------------------------------------------
 # 🟩 ADMIN/SYSTEM ENDPOINTS (FIX 2: ADMIN ONLY)
 # ---------------------------------------------------------
 
 @app.get("/admin/submissions/approved", dependencies=[Depends(require_admin)])
 def admin_list_all_approved_submissions():
-    """FIX 2: Admin views all approved submissions across all users."""
+    """Admin views all approved submissions across all users."""
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute("""
@@ -291,7 +401,7 @@ def admin_list_all_approved_submissions():
 
 @app.get("/admin/instances/all", dependencies=[Depends(require_admin)])
 def admin_list_all_instances():
-    """FIX 2: Admin views all spawned instances (running, stopped, expired)."""
+    """Admin views all spawned instances (running, stopped, expired)."""
     return list_all_instances()
 
 @app.get("/admin/stats", dependencies=[Depends(require_admin)])

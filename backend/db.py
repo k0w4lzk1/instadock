@@ -14,15 +14,28 @@ def init_db():
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
 
-        # Users
+        # Users (CRITICAL FIX: Added password reset fields)
         c.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id TEXT PRIMARY KEY,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            role TEXT NOT NULL DEFAULT 'user'
+            role TEXT NOT NULL DEFAULT 'user',
+            reset_token TEXT,
+            reset_expires_at TEXT
         )
         """)
+        
+        # Add password reset columns if they don't exist (for existing databases)
+        try:
+            c.execute("ALTER TABLE users ADD COLUMN reset_token TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            c.execute("ALTER TABLE users ADD COLUMN reset_expires_at TEXT")
+        except sqlite3.OperationalError:
+            pass
+
 
         # Submissions
         c.execute("""
@@ -58,7 +71,7 @@ def init_db():
         try:
             c.execute("ALTER TABLE submissions ADD COLUMN image_tag TEXT")
         except sqlite3.OperationalError:
-            pass # Column already exists
+            pass 
         
         conn.commit()
 
@@ -119,6 +132,12 @@ def list_approved_submissions(user_id):
             ORDER BY created_at DESC
         """, (user_id,)).fetchall()
         return [dict(r) for r in rows]
+
+def delete_submission(sub_id):
+    """Admin function to permanently delete a submission record."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM submissions WHERE id=?", (sub_id,))
+        conn.commit()
 
 # ---------------- INSTANCES ----------------
 
@@ -182,10 +201,36 @@ def create_user(username: str, password_hash: str, role: str = 'user'):
         conn.execute("""
             INSERT INTO users (id, username, password_hash, role)
             VALUES (?, ?, ?, ?)
-        """, (user_id, username, password_hash, role)) # FIX: Added username to the tuple to match the 4 binding variables
+        """, (user_id, username, password_hash, role)) 
         conn.commit()
     return user_id
 
+# FIX: New function to save the password reset token
+def save_password_reset_token(user_id: str, token: str, expires_at: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("""
+            UPDATE users SET reset_token=?, reset_expires_at=? WHERE id=?
+        """, (token, expires_at, user_id))
+        conn.commit()
+
+# FIX: New function to verify and clear the token
+def verify_and_clear_reset_token(token: str):
+    now_iso = datetime.datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        # Find user where token matches and has not expired
+        user_row = conn.execute("""
+            SELECT id, password_hash FROM users WHERE reset_token=? AND reset_expires_at > ?
+        """, (token, now_iso)).fetchone()
+        
+        if user_row:
+            user_data = dict(user_row)
+            # Clear token immediately after successful verification
+            conn.execute("UPDATE users SET reset_token=NULL, reset_expires_at=NULL WHERE id=?", (user_data["id"],))
+            conn.commit()
+            return user_data["id"]
+        
+        return None
 
 # Initialize DB on import
 init_db()
